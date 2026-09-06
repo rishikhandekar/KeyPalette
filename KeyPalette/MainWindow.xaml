@@ -1,0 +1,116 @@
+﻿<ui:FluentWindow x:Class="KeyPalette.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        Title="KeyPalette - Keyboard RGB" Height="600" Width="700"
+        WindowStartupLocation="CenterScreen"
+        ExtendsContentIntoTitleBar="True"
+        WindowBackdropType="Mica"
+        Background="#121212" Foreground="#FFFFFF">
+
+    <Grid Margin="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <StackPanel Grid.Row="0" Margin="0,0,0,20">
+            <TextBlock Text="KeyPalette" FontSize="26" FontWeight="SemiBold" Foreground="#FFFFFF"/>
+            <TextBlock Text="Native EC/WMI Keyboard Lighting Controller" FontSize="13" Foreground="#888888" Margin="0,4,0,0"/>
+        </StackPanel>
+
+        <!-- Main Dashboard -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1.1*"/>
+                <ColumnDefinition Width="12"/>
+                <ColumnDefinition Width="0.9*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Controls Panel -->
+            <Border Grid.Column="0" Background="#1C1C1C" CornerRadius="12" Padding="16" BorderBrush="#2C2C2C" BorderThickness="1">
+                <StackPanel>
+                    <TextBlock Text="Lighting Effect" FontSize="15" FontWeight="Medium" Margin="0,0,0,10"/>
+
+                    <ComboBox x:Name="EffectSelector" SelectedIndex="0" Margin="0,0,0,16">
+                        <ComboBoxItem Content="Breathing / Smooth Pulse"/>
+                        <ComboBoxItem Content="Rainbow / Spectrum Cycle"/>
+                        <ComboBoxItem Content="Blink / Flash"/>
+                        <ComboBoxItem Content="Heartbeat Rhythm"/>
+                        <ComboBoxItem Content="Static Solid Color"/>
+                    </ComboBox>
+
+                    <TextBlock Text="Speed Transition" FontSize="14" FontWeight="Medium" Margin="0,0,0,8"/>
+                    <Grid Margin="0,0,0,16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Slider x:Name="SpeedSlider" Minimum="10" Maximum="500" Value="150" VerticalAlignment="Center"/>
+                        <TextBlock Grid.Column="1" Text="{Binding ElementName=SpeedSlider, Path=Value, StringFormat={}{0:0} ms}" Margin="10,0,0,0" Foreground="#AAAAAA" VerticalAlignment="Center"/>
+                    </Grid>
+
+                    <TextBlock Text="Quick Solid Colors" FontSize="14" FontWeight="Medium" Margin="0,0,0,8"/>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,14">
+                        <Button Background="#FF0033" Width="36" Height="36" Margin="4" Click="Swatch_Click" Tag="FF0000">
+                            <Button.Resources>
+                                <Style TargetType="Border"><Setter Property="CornerRadius" Value="18"/></Style>
+                            </Button.Resources>
+                        </Button>
+                        <Button Background="#00E5FF" Width="36" Height="36" Margin="4" Click="Swatch_Click" Tag="00FFFF"/>
+                        <Button Background="#00FF66" Width="36" Height="36" Margin="4" Click="Swatch_Click" Tag="00FF00"/>
+                        <Button Background="#D500F9" Width="36" Height="36" Margin="4" Click="Swatch_Click" Tag="FF00FF"/>
+                        <Button Background="#FFD600" Width="36" Height="36" Margin="4" Click="Swatch_Click" Tag="FFFF00"/>
+                        <Button Background="#FFFFFF" Width="36" Height="36" Margin="4" Click="Swatch_Click" Tag="FFFFFF"/>
+                    </StackPanel>
+
+                    <TextBlock Text="Custom Hex Color" FontSize="14" FontWeight="Medium" Margin="0,0,0,8"/>
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBox x:Name="HexInput" Text="00E5FF" MaxLength="6" VerticalContentAlignment="Center"/>
+                        <Button Grid.Column="1" Content="Set" Width="70" Margin="8,0,0,0" Click="BtnSetHex_Click"/>
+                    </Grid>
+                </StackPanel>
+            </Border>
+
+            <!-- Preview Card -->
+            <Border Grid.Column="2" Background="#1C1C1C" CornerRadius="12" Padding="16" BorderBrush="#2C2C2C" BorderThickness="1">
+                <StackPanel>
+                    <TextBlock Text="Active Preview" FontSize="15" FontWeight="Medium" Margin="0,0,0,12"/>
+                    <Border x:Name="ColorGlow" Height="90" CornerRadius="8" Background="#00E5FF">
+                        <Border.Effect>
+                            <DropShadowEffect Color="#00E5FF" BlurRadius="25" ShadowDepth="0" Opacity="0.5"/>
+                        </Border.Effect>
+                        <TextBlock Text="KEYBOARD ACTIVE" HorizontalAlignment="Center" VerticalAlignment="Center" FontWeight="Bold" Foreground="#121212"/>
+                    </Border>
+
+                    <TextBlock Text="Hardware" FontSize="14" FontWeight="Medium" Margin="0,20,0,8"/>
+                    <TextBlock x:Name="HwStatusLabel" Text="Not connected" TextWrapping="Wrap" Foreground="#AAAAAA" FontSize="12" Margin="0,0,0,10"/>
+                    <Button Content="Locate InsydeDCHU.dll" Click="BtnLocateDll_Click" Margin="0,0,0,8"/>
+                    <Button Content="Reconnect" Click="BtnConnect_Click"/>
+                </StackPanel>
+            </Border>
+        </Grid>
+
+        <!-- Bottom Actions -->
+        <Grid Grid.Row="2" Margin="0,20,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <TextBlock x:Name="StatusLabel" Text="Status: Idle" Foreground="#777777" VerticalAlignment="Center"/>
+            <Button Grid.Column="1" Content="Stop Effect" Margin="0,0,10,0" Width="110" Height="36" Background="#2E2E2E" Click="BtnStop_Click"/>
+            <Button Grid.Column="2" Content="Apply Effect" Width="130" Height="36" Background="#0078D4" FontWeight="SemiBold" Click="BtnApply_Click"/>
+        </Grid>
+
+        <TextBlock Grid.Row="3" Text="Runs elevated to write directly to the embedded controller via WMI - no external .exe is used." Foreground="#555555" FontSize="11" Margin="0,14,0,0"/>
+    </Grid>
+</ui:FluentWindow>

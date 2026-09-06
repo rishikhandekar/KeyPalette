@@ -1,0 +1,23 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<OutputType>WinExe</OutputType>
+		<TargetFramework>net8.0-windows</TargetFramework>
+		<Nullable>enable</Nullable>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<UseWPF>true</UseWPF>
+		<RootNamespace>KeyPalette</RootNamespace>
+		<AssemblyName>KeyPalette</AssemblyName>
+
+		<!-- Forces UAC elevation so the WMI provider write succeeds -->
+		<ApplicationManifest>app.manifest</ApplicationManifest>
+
+		<!-- System.Management needs this to resolve WMI types at runtime on trimmed/self-contained builds -->
+		<EnableUnsafeBinaryFormatterSerialization>false</EnableUnsafeBinaryFormatterSerialization>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="WPF-UI" Version="3.0.5" />
+	</ItemGroup>
+
+</Project>
