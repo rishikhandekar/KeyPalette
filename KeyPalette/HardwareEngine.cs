@@ -13,7 +13,8 @@ namespace KeyPalette
         Breathing,
         Rainbow,
         Blink,
-        Heartbeat
+        Heartbeat,
+        Custom
     }
 
     /// <summary>
@@ -58,6 +59,23 @@ namespace KeyPalette
 
         public bool IsConnected => _hDll != IntPtr.Zero && _setDchuData != null && _writeAppSettings != null;
         public string? LoadedFrom { get; private set; }
+
+        /// <summary>
+        /// The color used by Breathing, Blink, and Heartbeat (they pulse this one color's
+        /// brightness). Defaults to cyan. Set this from the UI's color picker before
+        /// starting one of those effects.
+        /// </summary>
+        public (byte r, byte g, byte b) BaseColor { get; set; } = (0x00, 0xE5, 0xFF);
+
+        /// <summary>
+        /// User-defined color stops for the "Custom" effect. The animation loop smoothly
+        /// cycles through these in order, wrapping back to the first. Needs at least 2
+        /// colors to animate; with 0 or 1 it just holds a single color.
+        /// </summary>
+        public List<(byte r, byte g, byte b)> CustomSequence { get; } = new();
+
+        /// <summary>0.0 - 1.0 global brightness multiplier applied to every SetColor call.</summary>
+        public double Brightness { get; set; } = 1.0;
 
         /// <summary>
         /// Tries the app folder and the common Acer install locations first.
@@ -143,9 +161,14 @@ namespace KeyPalette
         {
             if (!IsConnected) return;
 
+            double br = System.Math.Clamp(Brightness, 0.0, 1.0);
+            byte sr = (byte)System.Math.Round(r * br);
+            byte sg = (byte)System.Math.Round(g * br);
+            byte sb = (byte)System.Math.Round(b * br);
+
             const byte mode = 8;
-            byte[] dchuData = { g, r, b, 0xF0 };
-            byte[] colour = { r, g, b };
+            byte[] dchuData = { sg, sr, sb, 0xF0 };
+            byte[] colour = { sr, sg, sb };
             byte[] modeBuf = { mode };
 
             lock (_sync)
@@ -163,7 +186,7 @@ namespace KeyPalette
                 }
             }
 
-            ColorChanged?.Invoke(r, g, b);
+            ColorChanged?.Invoke(sr, sg, sb);
         }
 
         // ---------------- Animation engine ----------------
@@ -189,7 +212,10 @@ namespace KeyPalette
             const int frameIntervalMs = 20; // ~50 FPS logical tick
             double t = 0;
             double cycleSeconds = Math.Max(0.05, speedMs / 100.0);
-            const double baseHue = 190.0; // cyan-ish accent for single-colour pulse effects
+
+            // Breathing/Blink/Heartbeat pulse the brightness of BaseColor - convert once,
+            // keep hue+saturation fixed, and vary V (brightness) each frame.
+            var (baseHue, baseSat, _) = RgbToHsv(BaseColor.r, BaseColor.g, BaseColor.b);
 
             while (!token.IsCancellationRequested)
             {
@@ -199,7 +225,7 @@ namespace KeyPalette
                         {
                             double phase = (t % cycleSeconds) / cycleSeconds;
                             double brightness = (Math.Sin(phase * 2 * Math.PI - Math.PI / 2) + 1) / 2;
-                            var (r, g, b) = HsvToRgb(baseHue, 1.0, brightness);
+                            var (r, g, b) = HsvToRgb(baseHue, baseSat, brightness);
                             SetColor(r, g, b);
                             break;
                         }
@@ -215,7 +241,7 @@ namespace KeyPalette
                     case EffectType.Blink:
                         {
                             double phase = (t % cycleSeconds) / cycleSeconds;
-                            var (r, g, b) = HsvToRgb(baseHue, 1.0, phase < 0.5 ? 1.0 : 0.0);
+                            var (r, g, b) = HsvToRgb(baseHue, baseSat, phase < 0.5 ? 1.0 : 0.0);
                             SetColor(r, g, b);
                             break;
                         }
@@ -231,8 +257,37 @@ namespace KeyPalette
                                 < 0.50 => 0.7 - EaseOut((phase - 0.35) / 0.15) * 0.7,
                                 _ => 0.0
                             };
-                            var (r, g, b) = HsvToRgb(baseHue, 1.0, Math.Clamp(brightness, 0, 1));
+                            var (r, g, b) = HsvToRgb(baseHue, baseSat, Math.Clamp(brightness, 0, 1));
                             SetColor(r, g, b);
+                            break;
+                        }
+
+                    case EffectType.Custom:
+                        {
+                            var seq = CustomSequence;
+                            if (seq.Count == 0)
+                            {
+                                SetColor(BaseColor.r, BaseColor.g, BaseColor.b);
+                            }
+                            else if (seq.Count == 1)
+                            {
+                                SetColor(seq[0].r, seq[0].g, seq[0].b);
+                            }
+                            else
+                            {
+                                double phase = (t % cycleSeconds) / cycleSeconds; // 0..1 across the whole sequence
+                                double segLen = 1.0 / seq.Count;
+                                int segIndex = Math.Min(seq.Count - 1, (int)(phase / segLen));
+                                int nextIndex = (segIndex + 1) % seq.Count;
+                                double localT = (phase - segIndex * segLen) / segLen; // 0..1 within this segment
+
+                                var from = seq[segIndex];
+                                var to = seq[nextIndex];
+                                byte r = (byte)Math.Round(from.r + (to.r - from.r) * localT);
+                                byte g = (byte)Math.Round(from.g + (to.g - from.g) * localT);
+                                byte b = (byte)Math.Round(from.b + (to.b - from.b) * localT);
+                                SetColor(r, g, b);
+                            }
                             break;
                         }
 
@@ -270,6 +325,27 @@ namespace KeyPalette
                 (byte)Math.Round((g1 + m) * 255),
                 (byte)Math.Round((b1 + m) * 255)
             );
+        }
+
+        /// <summary>Inverse of HsvToRgb: RGB (0-255 each) -> (hue 0-360, saturation 0-1, value 0-1).</summary>
+        private static (double h, double s, double v) RgbToHsv(byte r, byte g, byte b)
+        {
+            double rd = r / 255.0, gd = g / 255.0, bd = b / 255.0;
+            double max = Math.Max(rd, Math.Max(gd, bd));
+            double min = Math.Min(rd, Math.Min(gd, bd));
+            double delta = max - min;
+
+            double h;
+            if (delta < 1e-9) h = 0;
+            else if (max == rd) h = 60 * (((gd - bd) / delta) % 6);
+            else if (max == gd) h = 60 * (((bd - rd) / delta) + 2);
+            else h = 60 * (((rd - gd) / delta) + 4);
+            if (h < 0) h += 360;
+
+            double s = max < 1e-9 ? 0 : delta / max;
+            double v = max;
+
+            return (h, s, v);
         }
 
         public void Dispose()
