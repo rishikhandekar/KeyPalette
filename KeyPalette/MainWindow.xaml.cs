@@ -1,14 +1,28 @@
-using System;
+﻿using System;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Threading;
+using static System.Windows.Forms.VisualStyles.VisualStyleElement.ToolTip;
 
 namespace KeyPalette
 {
-    public partial class MainWindow : Wpf.Ui.Controls.FluentWindow
+    public enum UiMode { Static, Breathing, Rainbow, Blink, Heartbeat, Custom }
+
+    public partial class MainWindow : Window
     {
         private readonly HardwareEngine _engine = new();
+        private UiMode _mode = UiMode.Static;
+
+        private string _lastHwStatus = "Not connected yet.";
+        private TextBlock? _settingsHwLabel;
+
+        private static readonly SolidColorBrush InactiveTabForeground = new(Color.FromRgb(0xAA, 0xAA, 0xAA));
+        private static readonly SolidColorBrush ActiveTabForeground = Brushes.White;
+        private static readonly SolidColorBrush ActiveTabBorder = new(Color.FromRgb(0xFF, 0x00, 0x3C));
+        private static readonly SolidColorBrush ActiveTabBackground = new(Color.FromRgb(0x18, 0x18, 0x18));
 
         public MainWindow()
         {
@@ -22,21 +36,155 @@ namespace KeyPalette
                 TryConnect();
                 RefreshSequencePanel();
                 RefreshPresetList();
+                SetMode(UiMode.Static);
             };
             Closed += (_, _) => _engine.Dispose();
         }
 
+        // ---------------- Custom title bar chrome ----------------
+
+        private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            if (e.ClickCount == 2)
+            {
+                WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+            }
+            else
+            {
+                DragMove();
+            }
+        }
+
+        private void BtnMinimize_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+
+        private void BtnMaximizeRestore_Click(object sender, RoutedEventArgs e) =>
+            WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+
+        private void BtnClose_Click(object sender, RoutedEventArgs e) => Close();
+
+        // ---------------- Sidebar mode navigation ----------------
+
+        private Button[] AllTabs => new[] { TabStatic, TabBreathing, TabRainbow, TabBlink, TabHeartbeat, TabCustom };
+
+        private void SidebarTab_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button btn && btn.Tag is string tag && Enum.TryParse<UiMode>(tag, out var mode))
+            {
+                SetMode(mode);
+            }
+        }
+
+        private void SetMode(UiMode mode)
+        {
+            _mode = mode;
+
+            foreach (var tab in AllTabs)
+            {
+                bool active = tab.Tag as string == mode.ToString();
+                tab.Foreground = active ? ActiveTabForeground : InactiveTabForeground;
+                tab.BorderBrush = active ? ActiveTabBorder : Brushes.Transparent;
+                tab.Background = active ? ActiveTabBackground : Brushes.Transparent;
+            }
+
+            QuickColorsSection.Visibility = mode == UiMode.Static ? Visibility.Visible : Visibility.Collapsed;
+            SpeedSection.Visibility = mode == UiMode.Static ? Visibility.Collapsed : Visibility.Visible;
+            EffectColorSection.Visibility =
+                (mode == UiMode.Breathing || mode == UiMode.Blink || mode == UiMode.Heartbeat)
+                    ? Visibility.Visible : Visibility.Collapsed;
+            CustomSequenceSection.Visibility = mode == UiMode.Custom ? Visibility.Visible : Visibility.Collapsed;
+
+            PropertiesHeader.Text = mode.ToString().ToUpperInvariant();
+            ModeLabel.Text = mode.ToString().ToUpperInvariant();
+
+            _engine.StopEffect();
+            StatusLabel.Text = "STATUS: IDLE";
+        }
+
+        // ---------------- Settings window (hardware / DLL setup) ----------------
+
+        private void MenuSettings_Click(object sender, RoutedEventArgs e)
+        {
+            var window = new Window
+            {
+                Title = "KeyPalette Settings",
+                Width = 440,
+                SizeToContent = SizeToContent.Height,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                ResizeMode = ResizeMode.NoResize,
+                Owner = this,
+                Background = new SolidColorBrush(Color.FromRgb(0x14, 0x14, 0x14)),
+                Foreground = Brushes.White
+            };
+
+            var stack = new StackPanel { Margin = new Thickness(22) };
+
+            stack.Children.Add(new TextBlock
+            {
+                Text = "HARDWARE",
+                FontSize = 13,
+                Foreground = Brushes.White,
+                Margin = new Thickness(0, 0, 0, 12)
+            });
+
+            var hwLabel = new TextBlock
+            {
+                Text = _lastHwStatus,
+                Foreground = new SolidColorBrush(Color.FromRgb(0xAA, 0xAA, 0xAA)),
+                FontSize = 12,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 16)
+            };
+            stack.Children.Add(hwLabel);
+            _settingsHwLabel = hwLabel;
+
+            var locateButton = new Button
+            {
+                Content = "LOCATE INSYDEDCHU.DLL",
+                Style = (Style)FindResource("FlatButton"),
+                Margin = new Thickness(0, 0, 0, 8)
+            };
+            locateButton.Click += (_, _) =>
+            {
+                var dialog = new Microsoft.Win32.OpenFileDialog
+                {
+                    Title = "Locate InsydeDCHU.dll",
+                    Filter = "InsydeDCHU.dll|InsydeDCHU.dll|All DLL files (*.dll)|*.dll",
+                    CheckFileExists = true
+                };
+                if (dialog.ShowDialog() == true) TryConnect(dialog.FileName);
+            };
+            stack.Children.Add(locateButton);
+
+            var reconnectButton = new Button { Content = "RECONNECT", Style = (Style)FindResource("FlatButton") };
+            reconnectButton.Click += (_, _) => TryConnect();
+            stack.Children.Add(reconnectButton);
+
+            window.Content = stack;
+            window.Closed += (_, _) => _settingsHwLabel = null;
+            window.ShowDialog();
+        }
+
+        // ---------------- Hardware connection ----------------
+
         private void TryConnect(string? explicitDllPath = null)
         {
             bool ok = _engine.Connect(explicitDllPath);
-            HwStatusLabel.Text = ok
+            string msg = ok
                 ? $"Connected via {_engine.LoadedFrom}"
-                : "Not connected - see status below, or click Locate InsydeDCHU.dll.";
+                : "Not connected - see Settings to locate InsydeDCHU.dll.";
+            _lastHwStatus = msg;
+            if (_settingsHwLabel != null) _settingsHwLabel.Text = msg;
+            HwStatusFooter.Text = msg;
         }
 
         private void OnHardwareStatus(string message)
         {
-            Dispatcher.Invoke(() => HwStatusLabel.Text = message);
+            Dispatcher.Invoke(() =>
+            {
+                _lastHwStatus = message;
+                if (_settingsHwLabel != null) _settingsHwLabel.Text = message;
+                HwStatusFooter.Text = message;
+            });
         }
 
         private void OnColorChanged(byte r, byte g, byte b)
@@ -52,26 +200,8 @@ namespace KeyPalette
             });
         }
 
-        private void BtnConnect_Click(object sender, RoutedEventArgs e) => TryConnect();
-
-        private void BtnLocateDll_Click(object sender, RoutedEventArgs e)
-        {
-            var dialog = new Microsoft.Win32.OpenFileDialog
-            {
-                Title = "Locate InsydeDCHU.dll",
-                Filter = "InsydeDCHU.dll|InsydeDCHU.dll|All DLL files (*.dll)|*.dll",
-                CheckFileExists = true
-            };
-
-            if (dialog.ShowDialog() == true)
-            {
-                TryConnect(dialog.FileName);
-            }
-        }
-
         // ---------------- Color picking helpers ----------------
 
-        /// <summary>Opens the native Windows color picker. Returns null if the user cancelled.</summary>
         private static (byte r, byte g, byte b)? PickColor(System.Drawing.Color? startColor = null)
         {
             using var dialog = new System.Windows.Forms.ColorDialog
@@ -96,7 +226,7 @@ namespace KeyPalette
             {
                 _engine.StopEffect();
                 _engine.SetColor(c.r, c.g, c.b);
-                StatusLabel.Text = $"Status: Static #{c.r:X2}{c.g:X2}{c.b:X2} Applied";
+                StatusLabel.Text = $"STATUS: STATIC #{c.r:X2}{c.g:X2}{c.b:X2} APPLIED";
             }
         }
 
@@ -108,11 +238,11 @@ namespace KeyPalette
             {
                 _engine.BaseColor = c;
                 EffectColorSwatch.Background = new SolidColorBrush(Color.FromRgb(c.r, c.g, c.b));
-                StatusLabel.Text = $"Status: Effect color set to #{c.r:X2}{c.g:X2}{c.b:X2}";
+                StatusLabel.Text = $"STATUS: EFFECT COLOR SET TO #{c.r:X2}{c.g:X2}{c.b:X2}";
             }
         }
 
-        // ---------------- Custom sequence (click + to add, click a swatch to remove) ----------------
+        // ---------------- Custom sequence ----------------
 
         private void RefreshSequencePanel()
         {
@@ -123,10 +253,11 @@ namespace KeyPalette
                 var (r, g, b) = _engine.CustomSequence[i];
                 var box = new Button
                 {
-                    Width = 36,
-                    Height = 36,
-                    Margin = new Thickness(4),
+                    Width = 40,
+                    Height = 40,
+                    Margin = new Thickness(0, 0, 8, 8),
                     Background = new SolidColorBrush(Color.FromRgb(r, g, b)),
+                    BorderThickness = new Thickness(0),
                     Tag = i,
                     ToolTip = $"#{r:X2}{g:X2}{b:X2} - click to remove"
                 };
@@ -136,12 +267,12 @@ namespace KeyPalette
 
             var addButton = new Button
             {
-                Width = 36,
-                Height = 36,
-                Margin = new Thickness(4),
+                Width = 40,
+                Height = 40,
+                Margin = new Thickness(0, 0, 8, 8),
                 Content = "+",
                 FontSize = 18,
-                FontWeight = FontWeights.Bold,
+                Style = (Style)FindResource("FlatButton"),
                 ToolTip = "Add a color to the sequence"
             };
             addButton.Click += BtnAddSequenceColor_Click;
@@ -187,7 +318,7 @@ namespace KeyPalette
         {
             if (_engine.CustomSequence.Count == 0)
             {
-                MessageBox.Show("Add at least one color to the Custom Sequence before saving a preset.",
+                MessageBox.Show("Add at least one color to the sequence before saving a preset.",
                     "Nothing to Save", MessageBoxButton.OK, MessageBoxImage.Information);
                 return;
             }
@@ -206,7 +337,7 @@ namespace KeyPalette
             });
             PresetStore.SaveAll(presets);
             RefreshPresetList();
-            StatusLabel.Text = $"Status: Preset '{name}' saved";
+            StatusLabel.Text = $"STATUS: PRESET '{name}' SAVED";
         }
 
         private void BtnLoadPreset_Click(object sender, RoutedEventArgs e)
@@ -232,8 +363,7 @@ namespace KeyPalette
             SpeedSlider.Value = preset.SpeedMs;
             BrightnessSlider.Value = preset.BrightnessPercent;
 
-            EffectSelector.SelectedIndex = 4; // "Custom Sequence"
-            StatusLabel.Text = $"Status: Preset '{name}' loaded";
+            StatusLabel.Text = $"STATUS: PRESET '{name}' LOADED";
         }
 
         private void BtnDeletePreset_Click(object sender, RoutedEventArgs e)
@@ -256,28 +386,40 @@ namespace KeyPalette
         private void BtnApply_Click(object sender, RoutedEventArgs e)
         {
             int speed = (int)SpeedSlider.Value;
-            string selected = ((ComboBoxItem)EffectSelector.SelectedItem).Content.ToString() ?? "";
 
-            EffectType effect = selected switch
+            switch (_mode)
             {
-                var s when s.Contains("Breathing") => EffectType.Breathing,
-                var s when s.Contains("Rainbow") => EffectType.Rainbow,
-                var s when s.Contains("Blink") => EffectType.Blink,
-                var s when s.Contains("Heartbeat") => EffectType.Heartbeat,
-                var s when s.Contains("Custom") => EffectType.Custom,
-                _ => EffectType.Static
-            };
+                case UiMode.Static:
+                    _engine.StopEffect();
+                    _engine.SetColor(_engine.BaseColor.r, _engine.BaseColor.g, _engine.BaseColor.b);
+                    StatusLabel.Text = "STATUS: STATIC COLOR APPLIED";
+                    break;
 
-            if (effect == EffectType.Static)
-            {
-                _engine.SetColor(_engine.BaseColor.r, _engine.BaseColor.g, _engine.BaseColor.b);
+                case UiMode.Breathing:
+                    _engine.StartEffect(EffectType.Breathing, speed);
+                    StatusLabel.Text = "STATUS: RUNNING BREATHING";
+                    break;
+
+                case UiMode.Rainbow:
+                    _engine.StartEffect(EffectType.Rainbow, speed);
+                    StatusLabel.Text = "STATUS: RUNNING RAINBOW";
+                    break;
+
+                case UiMode.Blink:
+                    _engine.StartEffect(EffectType.Blink, speed);
+                    StatusLabel.Text = "STATUS: RUNNING BLINK";
+                    break;
+
+                case UiMode.Heartbeat:
+                    _engine.StartEffect(EffectType.Heartbeat, speed);
+                    StatusLabel.Text = "STATUS: RUNNING HEARTBEAT";
+                    break;
+
+                case UiMode.Custom:
+                    _engine.StartEffect(EffectType.Custom, speed);
+                    StatusLabel.Text = "STATUS: RUNNING CUSTOM SEQUENCE";
+                    break;
             }
-            else
-            {
-                _engine.StartEffect(effect, speed);
-            }
-
-            StatusLabel.Text = $"Status: Running {selected.Split('/')[0].Trim()}";
         }
 
         private void Swatch_Click(object sender, RoutedEventArgs e)
@@ -291,14 +433,14 @@ namespace KeyPalette
 
                 _engine.StopEffect();
                 _engine.SetColor(r, g, b);
-                StatusLabel.Text = $"Status: Static #{hex} Applied";
+                StatusLabel.Text = $"STATUS: STATIC #{hex} APPLIED";
             }
         }
 
         private void BtnStop_Click(object sender, RoutedEventArgs e)
         {
             _engine.StopEffect();
-            StatusLabel.Text = "Status: Stopped";
+            StatusLabel.Text = "STATUS: STOPPED";
         }
     }
 }
