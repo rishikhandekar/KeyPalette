@@ -14,6 +14,8 @@ namespace KeyPalette
         Rainbow,
         Blink,
         Heartbeat,
+        Fire,
+        Reactive,
         Custom
     }
 
@@ -76,6 +78,17 @@ namespace KeyPalette
 
         /// <summary>0.0 - 1.0 global brightness multiplier applied to every SetColor call.</summary>
         public double Brightness { get; set; } = 1.0;
+
+        /// <summary>
+        /// Reactive mode: when true, every keystroke flashes a brand-new random RGB color
+        /// instead of the fixed <see cref="BaseColor"/>. Read fresh on each strike, so it can be
+        /// toggled live while Reactive is already running.
+        /// </summary>
+        public bool RandomizeReactiveColor { get; set; }
+
+        private volatile bool _reactiveActive;
+        private CancellationTokenSource? _reactiveFadeCts;
+        private readonly Random _reactiveRandom = new();
 
         /// <summary>
         /// Tries the app folder and the common Acer install locations first.
@@ -194,18 +207,83 @@ namespace KeyPalette
         public void StartEffect(EffectType effect, int speedMs)
         {
             StopEffect();
+
+            if (effect == EffectType.Reactive)
+            {
+                // Reactive doesn't run a continuous tick loop like the others - it just sits
+                // armed and dark until GlobalKeyboardHook reports a keystroke via ReactiveStrike().
+                _reactiveActive = true;
+                SetColor(0, 0, 0);
+                return;
+            }
+
             _animCts = new CancellationTokenSource();
             _animTask = Task.Run(() => AnimationLoop(effect, speedMs, _animCts.Token), _animCts.Token);
         }
 
         public void StopEffect()
         {
+            _reactiveActive = false;
+            _reactiveFadeCts?.Cancel();
+            _reactiveFadeCts?.Dispose();
+            _reactiveFadeCts = null;
+
             _animCts?.Cancel();
             try { _animTask?.Wait(200); } catch { /* task already exiting */ }
             _animCts?.Dispose();
             _animCts = null;
             _animTask = null;
         }
+
+        /// <summary>
+        /// Called by the global keyboard hook on every keystroke while Reactive is running.
+        /// Immediately flashes the target color (BaseColor, or a fresh random one if
+        /// <see cref="RandomizeReactiveColor"/> is set), then fades the whole backlight back to
+        /// black over ~180ms. A no-op if Reactive isn't the active effect, so the hook can call
+        /// this unconditionally on every keystroke without checking UI state itself.
+        /// </summary>
+        public void ReactiveStrike()
+        {
+            if (!_reactiveActive) return;
+
+            var (r, g, b) = RandomizeReactiveColor ? RandomFullColor(_reactiveRandom) : BaseColor;
+
+            // Fast typing re-triggers this far quicker than a single fade takes to finish -
+            // cancel whatever fade is still in flight so the new flash always starts clean from
+            // full brightness instead of blending in partway through the previous one.
+            var previousCts = _reactiveFadeCts;
+            var cts = new CancellationTokenSource();
+            _reactiveFadeCts = cts;
+            previousCts?.Cancel();
+            previousCts?.Dispose();
+
+            SetColor(r, g, b);
+            _ = FadeReactiveFlashAsync(r, g, b, cts.Token);
+        }
+
+        private async Task FadeReactiveFlashAsync(byte r, byte g, byte b, CancellationToken token)
+        {
+            const int durationMs = 180;
+            const int stepMs = 15;
+            int steps = durationMs / stepMs;
+
+            try
+            {
+                for (int i = 1; i <= steps; i++)
+                {
+                    await Task.Delay(stepMs, token);
+                    double remaining = 1.0 - (double)i / steps; // 1.0 -> 0.0 over the fade
+                    SetColor((byte)Math.Round(r * remaining), (byte)Math.Round(g * remaining), (byte)Math.Round(b * remaining));
+                }
+            }
+            catch (TaskCanceledException)
+            {
+                // Superseded by a newer keystroke's flash - that one owns the backlight now.
+            }
+        }
+
+        private static (byte r, byte g, byte b) RandomFullColor(Random rng) =>
+            ((byte)rng.Next(256), (byte)rng.Next(256), (byte)rng.Next(256));
 
         private async Task AnimationLoop(EffectType effect, int speedMs, CancellationToken token)
         {
@@ -216,6 +294,16 @@ namespace KeyPalette
             // Breathing/Blink/Heartbeat pulse the brightness of BaseColor - convert once,
             // keep hue+saturation fixed, and vary V (brightness) each frame.
             var (baseHue, baseSat, _) = RgbToHsv(BaseColor.r, BaseColor.g, BaseColor.b);
+
+            // Fire has no per-key addressing available on this hardware (whole-zone only), so
+            // it fakes flicker by re-rolling a random ember color every "cycleSeconds" (reusing
+            // the same Speed slider as the other effects) and smoothly blending the whole
+            // backlight from the previous roll to the new one, rather than hard-cutting between
+            // two fixed colors.
+            var fireRandom = new Random();
+            var fireTargetColor = RandomFireColor(fireRandom);
+            var firePreviousColor = fireTargetColor;
+            double firePrevPhase = 0;
 
             while (!token.IsCancellationRequested)
             {
@@ -262,6 +350,28 @@ namespace KeyPalette
                             break;
                         }
 
+                    case EffectType.Fire:
+                        {
+                            double phase = (t % cycleSeconds) / cycleSeconds;
+
+                            // Phase wrapped back to the start of a new cycle - lock in the color
+                            // we were blending toward as the new starting point, and roll a
+                            // fresh random target to blend toward next.
+                            if (phase < firePrevPhase)
+                            {
+                                firePreviousColor = fireTargetColor;
+                                fireTargetColor = RandomFireColor(fireRandom);
+                            }
+                            firePrevPhase = phase;
+
+                            // EaseOut rather than linear blending front-loads the color change,
+                            // so most of the cycle "sits" near the new ember shade instead of
+                            // sliding through it evenly - reads more like a flicker than a fade.
+                            var (r, g, b) = LerpColor(firePreviousColor, fireTargetColor, EaseOut(phase));
+                            SetColor(r, g, b);
+                            break;
+                        }
+
                     case EffectType.Custom:
                         {
                             var seq = CustomSequence;
@@ -304,6 +414,34 @@ namespace KeyPalette
         }
 
         private static double EaseOut(double x) => 1 - Math.Pow(1 - Math.Clamp(x, 0, 1), 2);
+
+        /// <summary>
+        /// A weighted-by-listing palette of ember shades - mostly deep red and bright orange,
+        /// with a couple of brighter yellow entries for occasional "flare-up" moments - matching
+        /// what a single whole-zone light can do to suggest fire without per-key control.
+        /// </summary>
+        private static readonly (byte r, byte g, byte b)[] FirePalette =
+        {
+            (0x8B, 0x00, 0x00), // deep red ember
+            (0xB2, 0x22, 0x00), // ember red-orange
+            (0xFF, 0x45, 0x00), // bright orange
+            (0xFF, 0x6A, 0x00), // orange
+            (0xFF, 0x8C, 0x00), // orange-yellow
+            (0xFF, 0xB3, 0x00), // amber
+            (0xFF, 0xD1, 0x00), // yellow flare
+        };
+
+        private static (byte r, byte g, byte b) RandomFireColor(Random rng) => FirePalette[rng.Next(FirePalette.Length)];
+
+        private static (byte r, byte g, byte b) LerpColor((byte r, byte g, byte b) from, (byte r, byte g, byte b) to, double t)
+        {
+            t = Math.Clamp(t, 0, 1);
+            return (
+                (byte)Math.Round(from.r + (to.r - from.r) * t),
+                (byte)Math.Round(from.g + (to.g - from.g) * t),
+                (byte)Math.Round(from.b + (to.b - from.b) * t)
+            );
+        }
 
         private static (byte r, byte g, byte b) HsvToRgb(double h, double s, double v)
         {

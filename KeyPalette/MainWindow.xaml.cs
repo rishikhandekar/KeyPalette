@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -12,7 +13,16 @@ namespace KeyPalette
     public partial class MainWindow : Window
     {
         private readonly HardwareEngine _engine = new();
+        private readonly GlobalKeyboardHook _keyboardHook = new();
         private UiMode _mode = UiMode.Static;
+
+        /// <summary>True = showing the effect gallery grid; False = showing the config controls
+        /// for whichever effect was picked. Only meaningful while _mode == UiMode.Presets.</summary>
+        private bool _presetShowingGallery = true;
+
+        /// <summary>The effect chosen from the gallery ("Breathing", "Rainbow", "Blink",
+        /// "Heartbeat", "Fire", "Reactive").</summary>
+        private string _selectedPresetEffect = "Breathing";
 
         private string _lastHwStatus = "Not connected yet.";
         private TextBlock? _settingsHwLabel;
@@ -26,8 +36,45 @@ namespace KeyPalette
         {
             InitializeComponent();
 
+            // The card-preview brushes (BreathingKeyBrush, BlinkKeyBrush, HeartbeatKeyBrush,
+            // RainbowKeyBrush) are declared with x:Name inside <Window.Resources>. WPF does NOT
+            // automatically add resource-dictionary entries to the owning element's NameScope
+            // just because they have x:Name - so Storyboard.TargetName in <Window.Triggers>
+            // can't resolve them unless we register them here explicitly.
+            RegisterName("BreathingKeyBrush", FindResource("BreathingKeyBrush"));
+            RegisterName("BlinkKeyBrush", FindResource("BlinkKeyBrush"));
+            RegisterName("HeartbeatKeyBrush", FindResource("HeartbeatKeyBrush"));
+            RegisterName("RainbowKeyBrush", FindResource("RainbowKeyBrush"));
+
+            // FireStopMid and FireStopBottom aren't keyed resources themselves - they're the
+            // nested, x:Named GradientStops inside FireKeyBrush - so they have to be reached
+            // through the brush's GradientStops collection rather than via FindResource.
+            var fireBrush = (LinearGradientBrush)FindResource("FireKeyBrush");
+            RegisterName("FireKeyBrush", fireBrush);
+            RegisterName("FireStopMid", fireBrush.GradientStops[1]);
+            RegisterName("FireStopBottom", fireBrush.GradientStops[2]);
+            RegisterName("ReactiveKeyBrush", FindResource("ReactiveKeyBrush"));
+
             _engine.StatusChanged += OnHardwareStatus;
             _engine.ColorChanged += OnColorChanged;
+
+            // Reactive needs to see keystrokes even when KeyPalette isn't the focused window, so
+            // it listens on a system-wide low-level hook rather than a WPF KeyDown handler. The
+            // hook itself just reports vkCodes; HardwareEngine.ReactiveStrike() is a no-op unless
+            // Reactive is actually the running effect, so it's safe to leave installed for the
+            // whole app lifetime instead of installing/uninstalling per effect switch.
+            _keyboardHook.KeyDown += OnGlobalKeyDown;
+            try
+            {
+                _keyboardHook.Install();
+            }
+            catch (InvalidOperationException ex)
+            {
+                // Non-fatal: every other effect still works fine without the hook, only
+                // Reactive would silently never flash. Surface it via the same status line the
+                // hardware connection uses rather than a blocking MessageBox on startup.
+                _lastHwStatus = $"Reactive effect unavailable - keyboard hook failed: {ex.Message}";
+            }
 
             Loaded += (_, _) =>
             {
@@ -36,7 +83,23 @@ namespace KeyPalette
                 RefreshPresetList();
                 SetMode(UiMode.Static);
             };
-            Closed += (_, _) => _engine.Dispose();
+            Closed += (_, _) =>
+            {
+                _keyboardHook.Dispose();
+                _engine.Dispose();
+            };
+        }
+
+        /// <summary>
+        /// Fired from GlobalKeyboardHook's hook callback thread on every system-wide keystroke.
+        /// Offloaded via Task.Run rather than handled inline - the hook callback runs on the UI
+        /// thread's message pump, and Windows can silently disable a low-level hook that blocks
+        /// its callback for too long, so the actual (blocking, native) hardware write must not
+        /// happen synchronously here.
+        /// </summary>
+        private void OnGlobalKeyDown(int vkCode)
+        {
+            _ = Task.Run(() => _engine.ReactiveStrike());
         }
 
         // ---------------- Sharp ComboBox click-to-toggle ----------------
@@ -109,6 +172,11 @@ namespace KeyPalette
         {
             _mode = mode;
 
+            if (mode == UiMode.Presets)
+            {
+                _presetShowingGallery = true; // always land on the gallery when entering Presets
+            }
+
             foreach (var tab in AllTabs)
             {
                 bool active = tab.Tag as string == mode.ToString();
@@ -117,52 +185,95 @@ namespace KeyPalette
                 tab.Background = active ? ActiveTabBackground : Brushes.Transparent;
             }
 
-            QuickColorsSection.Visibility = mode == UiMode.Static ? Visibility.Visible : Visibility.Collapsed;
-            PresetsSection.Visibility = mode == UiMode.Presets ? Visibility.Visible : Visibility.Collapsed;
-            SpeedSection.Visibility = mode == UiMode.Static ? Visibility.Collapsed : Visibility.Visible;
-            CustomSequenceSection.Visibility = mode == UiMode.Custom ? Visibility.Visible : Visibility.Collapsed;
-
-            UpdateEffectColorVisibility();
-
-            PropertiesHeader.Text = mode.ToString().ToUpperInvariant();
-            UpdateModeLabel();
+            RefreshPresetSubState();
 
             _engine.StopEffect();
             StatusLabel.Text = "STATUS: IDLE";
         }
 
-        /// <summary>Effect Color only makes sense for Presets mode, and only for the three
-        /// preset effects that pulse a single color (Rainbow sweeps every hue, so it's excluded).</summary>
-        private void UpdateEffectColorVisibility()
+        /// <summary>
+        /// Recomputes every section's visibility from (_mode, _presetShowingGallery). Called
+        /// whenever the mode changes, a gallery card is clicked, or Back is clicked.
+        /// </summary>
+        private void RefreshPresetSubState()
         {
-            if (EffectColorSection == null || PresetEffectSelector == null) return;
+            bool isPresetsGallery = _mode == UiMode.Presets && _presetShowingGallery;
+            bool isPresetsConfig = _mode == UiMode.Presets && !_presetShowingGallery;
 
-            if (_mode != UiMode.Presets)
-            {
-                EffectColorSection.Visibility = Visibility.Collapsed;
-                return;
-            }
+            // Center panel: gallery grid replaces the visualizer only during Presets gallery state.
+            VisualizerHost.Visibility = isPresetsGallery ? Visibility.Collapsed : Visibility.Visible;
+            EffectGalleryPanel.Visibility = isPresetsGallery ? Visibility.Visible : Visibility.Collapsed;
 
-            string selected = (PresetEffectSelector.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "";
-            EffectColorSection.Visibility = selected is "Breathing" or "Blink" or "Heartbeat"
-                ? Visibility.Visible
-                : Visibility.Collapsed;
+            // Right panel sections.
+            QuickColorsSection.Visibility = _mode == UiMode.Static ? Visibility.Visible : Visibility.Collapsed;
+            PresetsPlaceholderSection.Visibility = isPresetsGallery ? Visibility.Visible : Visibility.Collapsed;
+            BackToEffectsButton.Visibility = isPresetsConfig ? Visibility.Visible : Visibility.Collapsed;
+            // Speed drives a continuous cycle (breathing/blink/rainbow/fire/etc.) that Reactive
+            // doesn't have - it fires from keystrokes, not a timer - so hide it there.
+            bool speedApplies = _mode == UiMode.Custom || (isPresetsConfig && _selectedPresetEffect != "Reactive");
+            SpeedSection.Visibility = speedApplies ? Visibility.Visible : Visibility.Collapsed;
+            CustomSequenceSection.Visibility = _mode == UiMode.Custom ? Visibility.Visible : Visibility.Collapsed;
+            BrightnessRow.Visibility = (_mode == UiMode.Static || _mode == UiMode.Custom || isPresetsConfig)
+                ? Visibility.Visible : Visibility.Collapsed;
+
+            // Nothing to Apply/Stop while just browsing the gallery.
+            ApplyStopBar.Visibility = isPresetsGallery ? Visibility.Collapsed : Visibility.Visible;
+
+            UpdateEffectColorVisibility();
+
+            PropertiesHeader.Text = isPresetsGallery ? "PRESETS" : _mode.ToString().ToUpperInvariant();
+            UpdateModeLabel();
         }
 
-        private void PresetEffectSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        private void EffectCard_Click(object sender, RoutedEventArgs e)
+        {
+            if (sender is Button btn && btn.Tag is string effectName)
+            {
+                _selectedPresetEffect = effectName;
+                _presetShowingGallery = false;
+                RefreshPresetSubState();
+            }
+        }
+
+        private void BtnBackToEffects_Click(object sender, RoutedEventArgs e)
+        {
+            _engine.StopEffect();
+            _presetShowingGallery = true;
+            RefreshPresetSubState();
+        }
+
+        /// <summary>Effect Color only makes sense once an effect is actually picked (Presets
+        /// config state), and for the four effects that use a single flash/pulse color
+        /// (Rainbow sweeps every hue and Fire always randomizes its own ember shades, so both
+        /// are excluded). Reactive additionally gets the Randomize Colors checkbox, and hides
+        /// the swatch itself while that's checked since a fixed color is meaningless then.</summary>
+        private void UpdateEffectColorVisibility()
+        {
+            if (EffectColorSection == null) return;
+
+            bool isPresetsConfig = _mode == UiMode.Presets && !_presetShowingGallery;
+            bool effectHasColor = _selectedPresetEffect is "Breathing" or "Blink" or "Heartbeat" or "Reactive";
+            EffectColorSection.Visibility = isPresetsConfig && effectHasColor ? Visibility.Visible : Visibility.Collapsed;
+
+            bool isReactive = _selectedPresetEffect == "Reactive";
+            RandomizeColorsCheckBox.Visibility = isReactive ? Visibility.Visible : Visibility.Collapsed;
+
+            bool hideSwatchForRandom = isReactive && RandomizeColorsCheckBox.IsChecked == true;
+            EffectColorSwatch.Visibility = hideSwatchForRandom ? Visibility.Collapsed : Visibility.Visible;
+        }
+
+        private void RandomizeColorsCheckBox_Changed(object sender, RoutedEventArgs e)
         {
             UpdateEffectColorVisibility();
-            UpdateModeLabel();
         }
 
         private void UpdateModeLabel()
         {
-            if (ModeLabel == null || PresetEffectSelector == null) return;
+            if (ModeLabel == null) return;
 
-            if (_mode == UiMode.Presets)
+            if (_mode == UiMode.Presets && !_presetShowingGallery)
             {
-                string selected = (PresetEffectSelector.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "";
-                ModeLabel.Text = $"PRESETS: {selected.ToUpperInvariant()}";
+                ModeLabel.Text = $"PRESETS: {_selectedPresetEffect.ToUpperInvariant()}";
             }
             else
             {
@@ -467,17 +578,19 @@ namespace KeyPalette
 
                 case UiMode.Presets:
                     {
-                        string selected = (PresetEffectSelector.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "Breathing";
-                        EffectType effect = selected switch
+                        EffectType effect = _selectedPresetEffect switch
                         {
                             "Breathing" => EffectType.Breathing,
                             "Rainbow" => EffectType.Rainbow,
                             "Blink" => EffectType.Blink,
                             "Heartbeat" => EffectType.Heartbeat,
+                            "Fire" => EffectType.Fire,
+                            "Reactive" => EffectType.Reactive,
                             _ => EffectType.Breathing
                         };
+                        _engine.RandomizeReactiveColor = RandomizeColorsCheckBox.IsChecked == true;
                         _engine.StartEffect(effect, speed);
-                        StatusLabel.Text = $"STATUS: RUNNING {selected.ToUpperInvariant()}";
+                        StatusLabel.Text = $"STATUS: RUNNING {_selectedPresetEffect.ToUpperInvariant()}";
                         break;
                     }
 

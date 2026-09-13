@@ -15,6 +15,257 @@
         <SolidColorBrush x:Key="PanelBorderBrush" Color="#2A2A2A"/>
         <SolidColorBrush x:Key="TextDimBrush" Color="#8A8A8A"/>
 
+        <!-- ============== Shared, NAMED brushes for the animated gallery-card previews ==============
+             Naming them (x:Name, not just x:Key) registers them in the Window's NameScope so the
+             Storyboards below can target them directly by name. Each is bound as the Content of a
+             ContentControl using the shared MiniKeyboardTemplate, so every key Rectangle's Fill is
+             a binding to this exact same Brush instance - animating the brush once animates every
+             key in that card simultaneously, with no per-key or per-frame code needed. -->
+        <SolidColorBrush x:Key="BreathingKeyBrush" x:Name="BreathingKeyBrush" Color="#00E5FF"/>
+        <SolidColorBrush x:Key="BlinkKeyBrush" x:Name="BlinkKeyBrush" Color="#AAAAAA"/>
+        <SolidColorBrush x:Key="HeartbeatKeyBrush" x:Name="HeartbeatKeyBrush" Color="#FF0033"/>
+        <SolidColorBrush x:Key="RainbowKeyBrush" x:Name="RainbowKeyBrush" Color="#FF0033"/>
+
+        <!-- Fire: a single shared vertical LinearGradientBrush (dark top -> orange middle ->
+             red bottom). Each key's Fill is RelativeToBoundingBox by default, so every tiny
+             key Rectangle renders its own copy of the same dark->orange->red gradient within
+             its own bounds - cheap, since it's just one Brush object with a few GradientStops,
+             not per-key state. The middle/bottom stops are named so the storyboard below can
+             jitter their Offset/Color for the flicker; the brush itself is named so the
+             storyboard can also flicker its overall Opacity. -->
+        <LinearGradientBrush x:Key="FireKeyBrush" x:Name="FireKeyBrush" StartPoint="0.5,0" EndPoint="0.5,1">
+            <GradientStop Color="#1A0A00" Offset="0.0"/>
+            <GradientStop x:Name="FireStopMid" Color="#FF6A00" Offset="0.55"/>
+            <GradientStop x:Name="FireStopBottom" Color="#FF0000" Offset="1.0"/>
+        </LinearGradientBrush>
+
+        <!-- Reactive: a single flash color whose Opacity is flickered on/off at irregular
+             intervals (see ReactiveCardStoryboard) to suggest bursts of typing. -->
+        <SolidColorBrush x:Key="ReactiveKeyBrush" x:Name="ReactiveKeyBrush" Color="#FFAA00"/>
+
+        <!-- ============== One shared mini-keyboard vector graphic ==============
+             A compact grid of Rectangles laid out like a real laptop keyboard (function row,
+             number row, QWERTY row, home row, shift row, bottom row with a wide spacebar - loosely
+             inspired by an Acer Aspire 7's layout). Every key's Fill is {Binding}, i.e. whatever
+             Brush is passed in as this ContentControl's Content - that's what lets one template
+             serve all four cards while each shows a different animated color/gradient. -->
+        <Style x:Key="MiniKey" TargetType="Rectangle">
+            <Setter Property="Width" Value="9"/>
+            <Setter Property="Height" Value="7"/>
+            <Setter Property="Margin" Value="1"/>
+        </Style>
+
+        <DataTemplate x:Key="MiniKeyboardTemplate">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+
+                <!-- Function row: Esc + F1-F12 + Del -->
+                <StackPanel Orientation="Horizontal">
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                </StackPanel>
+
+                <!-- Number row + wide Backspace -->
+                <StackPanel Orientation="Horizontal">
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Width="20" Height="7" Margin="1" Fill="{Binding}"/>
+                </StackPanel>
+
+                <!-- QWERTY row: wide Tab + letters + brackets/backslash -->
+                <StackPanel Orientation="Horizontal">
+                    <Rectangle Style="{StaticResource MiniKey}" Width="14" Height="7" Margin="1" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                </StackPanel>
+
+                <!-- Home row: wide Caps + letters + wide Enter -->
+                <StackPanel Orientation="Horizontal">
+                    <Rectangle Style="{StaticResource MiniKey}" Width="16" Height="7" Margin="1" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Width="18" Height="7" Margin="1" Fill="{Binding}"/>
+                </StackPanel>
+
+                <!-- Shift row -->
+                <StackPanel Orientation="Horizontal">
+                    <Rectangle Style="{StaticResource MiniKey}" Width="20" Height="7" Margin="1" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Width="20" Height="7" Margin="1" Fill="{Binding}"/>
+                </StackPanel>
+
+                <!-- Bottom row: Ctrl/Win/Alt, wide spacebar, Alt/Ctrl, arrow cluster -->
+                <StackPanel Orientation="Horizontal">
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Width="58" Height="7" Margin="1" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                    <Rectangle Style="{StaticResource MiniKey}" Fill="{Binding}"/>
+                </StackPanel>
+
+            </StackPanel>
+        </DataTemplate>
+
+        <!-- ============== Card preview animations (started once when the window loads) ============== -->
+        <Storyboard x:Key="BreathingCardStoryboard">
+            <DoubleAnimation Storyboard.TargetName="BreathingKeyBrush" Storyboard.TargetProperty="Opacity"
+                              From="1.0" To="0.2" Duration="0:0:1.3" AutoReverse="True" RepeatBehavior="Forever"/>
+        </Storyboard>
+
+        <Storyboard x:Key="BlinkCardStoryboard">
+            <DoubleAnimationUsingKeyFrames Storyboard.TargetName="BlinkKeyBrush" Storyboard.TargetProperty="Opacity"
+                                            RepeatBehavior="Forever">
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0.0" Value="1.0"/>
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0.5" Value="0.0"/>
+                <DiscreteDoubleKeyFrame KeyTime="0:0:1.0" Value="1.0"/>
+            </DoubleAnimationUsingKeyFrames>
+        </Storyboard>
+
+        <Storyboard x:Key="HeartbeatCardStoryboard">
+            <DoubleAnimationUsingKeyFrames Storyboard.TargetName="HeartbeatKeyBrush" Storyboard.TargetProperty="Opacity"
+                                            RepeatBehavior="Forever">
+                <LinearDoubleKeyFrame KeyTime="0:0:0.00" Value="0.3"/>
+                <LinearDoubleKeyFrame KeyTime="0:0:0.15" Value="1.0"/>
+                <LinearDoubleKeyFrame KeyTime="0:0:0.30" Value="0.5"/>
+                <LinearDoubleKeyFrame KeyTime="0:0:0.45" Value="1.0"/>
+                <LinearDoubleKeyFrame KeyTime="0:0:0.70" Value="0.3"/>
+                <LinearDoubleKeyFrame KeyTime="0:0:1.20" Value="0.3"/>
+            </DoubleAnimationUsingKeyFrames>
+        </Storyboard>
+
+        <!-- Whole-keyboard rainbow: every key shares one SolidColorBrush, and its Color is
+             cycled smoothly through the spectrum with LinearColorKeyFrames (which interpolate,
+             unlike Discrete frames) - the last stop matches the first so the loop has no seam. -->
+        <Storyboard x:Key="RainbowCardStoryboard">
+            <ColorAnimationUsingKeyFrames Storyboard.TargetName="RainbowKeyBrush" Storyboard.TargetProperty="Color"
+                                           RepeatBehavior="Forever">
+                <LinearColorKeyFrame KeyTime="0:0:0.0" Value="#FF0033"/>
+                <LinearColorKeyFrame KeyTime="0:0:0.5" Value="#FFD600"/>
+                <LinearColorKeyFrame KeyTime="0:0:1.0" Value="#00FF66"/>
+                <LinearColorKeyFrame KeyTime="0:0:1.5" Value="#00E5FF"/>
+                <LinearColorKeyFrame KeyTime="0:0:2.0" Value="#3B30FF"/>
+                <LinearColorKeyFrame KeyTime="0:0:2.5" Value="#D500F9"/>
+                <LinearColorKeyFrame KeyTime="0:0:3.0" Value="#FF0033"/>
+            </ColorAnimationUsingKeyFrames>
+        </Storyboard>
+
+        <!-- Fire: three Discrete (non-interpolated) key-frame animations run together on a
+             short, looping cycle - the mid stop's Offset hops up/down (flame lapping), the
+             mid/bottom stop Colors hop between ember shades, and the brush's overall Opacity
+             hops slightly - all landing on a NEW value every ~60-90ms rather than smoothly
+             tweening between two values. That abrupt, irregular hopping (vs. Linear/Breathing's
+             smooth sine) is what reads as "flicker" instead of "pulse", and it's still cheap:
+             just a few GradientStop/Brush property writes per tick, no per-key work. -->
+        <Storyboard x:Key="FireCardStoryboard">
+            <DoubleAnimationUsingKeyFrames Storyboard.TargetName="FireStopMid" Storyboard.TargetProperty="Offset"
+                                            RepeatBehavior="Forever">
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0.00" Value="0.45"/>
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0.07" Value="0.62"/>
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0.14" Value="0.50"/>
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0.21" Value="0.68"/>
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0.28" Value="0.40"/>
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0.35" Value="0.55"/>
+            </DoubleAnimationUsingKeyFrames>
+
+            <ColorAnimationUsingKeyFrames Storyboard.TargetName="FireStopMid" Storyboard.TargetProperty="Color"
+                                           RepeatBehavior="Forever">
+                <DiscreteColorKeyFrame KeyTime="0:0:0.00" Value="#FF6A00"/>
+                <DiscreteColorKeyFrame KeyTime="0:0:0.06" Value="#FFA300"/>
+                <DiscreteColorKeyFrame KeyTime="0:0:0.12" Value="#FF8800"/>
+                <DiscreteColorKeyFrame KeyTime="0:0:0.18" Value="#FFC400"/>
+                <DiscreteColorKeyFrame KeyTime="0:0:0.24" Value="#FF6A00"/>
+                <DiscreteColorKeyFrame KeyTime="0:0:0.30" Value="#FF9200"/>
+            </ColorAnimationUsingKeyFrames>
+
+            <ColorAnimationUsingKeyFrames Storyboard.TargetName="FireStopBottom" Storyboard.TargetProperty="Color"
+                                           RepeatBehavior="Forever">
+                <DiscreteColorKeyFrame KeyTime="0:0:0.00" Value="#FF0000"/>
+                <DiscreteColorKeyFrame KeyTime="0:0:0.09" Value="#E5001A"/>
+                <DiscreteColorKeyFrame KeyTime="0:0:0.18" Value="#FF2200"/>
+                <DiscreteColorKeyFrame KeyTime="0:0:0.27" Value="#CC0000"/>
+            </ColorAnimationUsingKeyFrames>
+
+            <DoubleAnimationUsingKeyFrames Storyboard.TargetName="FireKeyBrush" Storyboard.TargetProperty="Opacity"
+                                            RepeatBehavior="Forever">
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0.00" Value="1.0"/>
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0.05" Value="0.85"/>
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0.10" Value="1.0"/>
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0.16" Value="0.9"/>
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0.22" Value="1.0"/>
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0.28" Value="0.8"/>
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0.34" Value="1.0"/>
+            </DoubleAnimationUsingKeyFrames>
+        </Storyboard>
+
+        <!-- Reactive: bursts of short, sharp flashes with irregular gaps between them (unlike
+             Blink's perfectly even 50/50 on/off) - meant to read as "typing", not "blinking".
+             Each flash snaps to full opacity then drops low almost immediately (a strike-and-
+             fade shape), and the gaps between bursts vary so it doesn't look metronomic. -->
+        <Storyboard x:Key="ReactiveCardStoryboard">
+            <DoubleAnimationUsingKeyFrames Storyboard.TargetName="ReactiveKeyBrush" Storyboard.TargetProperty="Opacity"
+                                            RepeatBehavior="Forever">
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0.00" Value="0.15"/>
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0.10" Value="1.0"/>
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0.18" Value="0.2"/>
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0.24" Value="1.0"/>
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0.30" Value="0.15"/>
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0.55" Value="1.0"/>
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0.62" Value="0.15"/>
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0.90" Value="1.0"/>
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0.98" Value="0.15"/>
+                <DiscreteDoubleKeyFrame KeyTime="0:0:1.30" Value="1.0"/>
+                <DiscreteDoubleKeyFrame KeyTime="0:0:1.38" Value="0.15"/>
+            </DoubleAnimationUsingKeyFrames>
+        </Storyboard>
+
         <!-- ============== Flat sharp button ============== -->
         <Style x:Key="FlatButton" TargetType="Button">
             <Setter Property="Background" Value="#1A1A1A"/>
@@ -52,6 +303,34 @@
             <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
             <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
             <Setter Property="FontSize" Value="13"/>
+        </Style>
+
+        <!-- ============== Effect gallery card ============== -->
+        <Style x:Key="EffectCardButton" TargetType="Button">
+            <Setter Property="Width" Value="210"/>
+            <Setter Property="Height" Value="150"/>
+            <Setter Property="Margin" Value="10"/>
+            <Setter Property="Background" Value="#141414"/>
+            <Setter Property="BorderBrush" Value="#2A2A2A"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
 
         <!-- ============== Sidebar nav tab (state driven from code-behind) ============== -->
@@ -229,6 +508,17 @@
 
     </Window.Resources>
 
+    <Window.Triggers>
+        <EventTrigger RoutedEvent="FrameworkElement.Loaded">
+            <BeginStoryboard Storyboard="{StaticResource BreathingCardStoryboard}"/>
+            <BeginStoryboard Storyboard="{StaticResource BlinkCardStoryboard}"/>
+            <BeginStoryboard Storyboard="{StaticResource HeartbeatCardStoryboard}"/>
+            <BeginStoryboard Storyboard="{StaticResource RainbowCardStoryboard}"/>
+            <BeginStoryboard Storyboard="{StaticResource FireCardStoryboard}"/>
+            <BeginStoryboard Storyboard="{StaticResource ReactiveCardStoryboard}"/>
+        </EventTrigger>
+    </Window.Triggers>
+
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="*"/>
@@ -265,9 +555,9 @@
                         Content="&#x2699;  SETTINGS" Click="MenuSettings_Click"/>
             </Grid>
 
-            <!-- ========== CENTER: keyboard visualizer canvas (unchanged theme) ========== -->
+            <!-- ========== CENTER: keyboard visualizer canvas, or effect gallery ========== -->
             <Grid Grid.Column="1" Background="#0A0A0A">
-                <Border Margin="30">
+                <Border x:Name="VisualizerHost" Margin="30">
                     <Border.Background>
                         <DrawingBrush TileMode="Tile" Viewport="0,0,36,36" ViewportUnits="Absolute">
                             <DrawingBrush.Drawing>
@@ -300,6 +590,80 @@
                     </Grid>
                 </Border>
 
+                <!-- Effect gallery: shown instead of the visualizer while picking a Preset effect -->
+                <ScrollViewer x:Name="EffectGalleryPanel" Visibility="Collapsed" Margin="30" VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <TextBlock Text="SELECT AN EFFECT" FontSize="14" Foreground="#666666"
+                                   HorizontalAlignment="Center" Margin="4,0,0,16"/>
+                        <!-- EffectCardButton is 210 wide with a 10px margin on every side, so each
+                             card occupies 230px; capping MaxWidth at 4 * 230 = 920 means the panel
+                             wraps to a new row only after a full 4-card row, and HorizontalAlignment
+                             ="Center" centers that up-to-920px block (rather than a single card row
+                             hugging the left edge) in whatever space the window gives it. -->
+                        <WrapPanel HorizontalAlignment="Center" MaxWidth="920">
+                            <Button Style="{StaticResource EffectCardButton}" Tag="Breathing" Click="EffectCard_Click">
+                                <StackPanel>
+                                    <Border Height="90" Margin="10,10,10,6" Background="#0A0A0A">
+                                        <ContentControl ContentTemplate="{StaticResource MiniKeyboardTemplate}"
+                                                         Content="{StaticResource BreathingKeyBrush}"/>
+                                    </Border>
+                                    <TextBlock Text="BREATHING" FontSize="11" Foreground="White" HorizontalAlignment="Center" Margin="0,0,0,10"/>
+                                </StackPanel>
+                            </Button>
+
+                            <Button Style="{StaticResource EffectCardButton}" Tag="Rainbow" Click="EffectCard_Click">
+                                <StackPanel>
+                                    <Border Height="90" Margin="10,10,10,6" Background="#0A0A0A">
+                                        <ContentControl ContentTemplate="{StaticResource MiniKeyboardTemplate}"
+                                                         Content="{StaticResource RainbowKeyBrush}"/>
+                                    </Border>
+                                    <TextBlock Text="RAINBOW" FontSize="11" Foreground="White" HorizontalAlignment="Center" Margin="0,0,0,10"/>
+                                </StackPanel>
+                            </Button>
+
+                            <Button Style="{StaticResource EffectCardButton}" Tag="Blink" Click="EffectCard_Click">
+                                <StackPanel>
+                                    <Border Height="90" Margin="10,10,10,6" Background="#0A0A0A">
+                                        <ContentControl ContentTemplate="{StaticResource MiniKeyboardTemplate}"
+                                                         Content="{StaticResource BlinkKeyBrush}"/>
+                                    </Border>
+                                    <TextBlock Text="BLINK" FontSize="11" Foreground="White" HorizontalAlignment="Center" Margin="0,0,0,10"/>
+                                </StackPanel>
+                            </Button>
+
+                            <Button Style="{StaticResource EffectCardButton}" Tag="Heartbeat" Click="EffectCard_Click">
+                                <StackPanel>
+                                    <Border Height="90" Margin="10,10,10,6" Background="#0A0A0A">
+                                        <ContentControl ContentTemplate="{StaticResource MiniKeyboardTemplate}"
+                                                         Content="{StaticResource HeartbeatKeyBrush}"/>
+                                    </Border>
+                                    <TextBlock Text="HEARTBEAT" FontSize="11" Foreground="White" HorizontalAlignment="Center" Margin="0,0,0,10"/>
+                                </StackPanel>
+                            </Button>
+
+                            <Button Style="{StaticResource EffectCardButton}" Tag="Fire" Click="EffectCard_Click">
+                                <StackPanel>
+                                    <Border Height="90" Margin="10,10,10,6" Background="#0A0A0A">
+                                        <ContentControl ContentTemplate="{StaticResource MiniKeyboardTemplate}"
+                                                         Content="{StaticResource FireKeyBrush}"/>
+                                    </Border>
+                                    <TextBlock Text="FIRE" FontSize="11" Foreground="White" HorizontalAlignment="Center" Margin="0,0,0,10"/>
+                                </StackPanel>
+                            </Button>
+
+                            <Button Style="{StaticResource EffectCardButton}" Tag="Reactive" Click="EffectCard_Click">
+                                <StackPanel>
+                                    <Border Height="90" Margin="10,10,10,6" Background="#0A0A0A">
+                                        <ContentControl ContentTemplate="{StaticResource MiniKeyboardTemplate}"
+                                                         Content="{StaticResource ReactiveKeyBrush}"/>
+                                    </Border>
+                                    <TextBlock Text="REACTIVE" FontSize="11" Foreground="White" HorizontalAlignment="Center" Margin="0,0,0,10"/>
+                                </StackPanel>
+                            </Button>
+                        </WrapPanel>
+                    </StackPanel>
+                </ScrollViewer>
+
                 <TextBlock x:Name="HwStatusFooter" Text="Not connected" Foreground="#555555" FontSize="10"
                            VerticalAlignment="Bottom" HorizontalAlignment="Left" Margin="30,0,0,14"/>
             </Grid>
@@ -331,20 +695,16 @@
                             <Button Content="CUSTOM COLOR..." Style="{StaticResource FlatButton}" HorizontalAlignment="Stretch" Click="BtnPickCustomStatic_Click" Margin="0,0,0,26"/>
                         </StackPanel>
 
-                        <!-- PRESETS: pick a built-in effect (Presets only) -->
-                        <StackPanel x:Name="PresetsSection">
-                            <TextBlock Text="BUILT-IN EFFECT" FontSize="10" Foreground="{StaticResource TextDimBrush}" Margin="0,0,0,10"/>
-                            <ComboBox x:Name="PresetEffectSelector" Style="{StaticResource SharpCombo}" SelectedIndex="0"
-                                      Margin="0,0,0,26" SelectionChanged="PresetEffectSelector_SelectionChanged"
-                                      PreviewMouseLeftButtonDown="Combo_PreviewMouseLeftButtonDown">
-                                <ComboBoxItem Content="Breathing"/>
-                                <ComboBoxItem Content="Rainbow"/>
-                                <ComboBoxItem Content="Blink"/>
-                                <ComboBoxItem Content="Heartbeat"/>
-                            </ComboBox>
+                        <!-- PRESETS: shown only in gallery state, as a placeholder -->
+                        <StackPanel x:Name="PresetsPlaceholderSection" Margin="0,20,0,0">
+                            <TextBlock Text="Select an effect from the gallery to configure it."
+                                       FontSize="13" Foreground="{StaticResource TextDimBrush}" TextWrapping="Wrap"/>
                         </StackPanel>
 
-                        <!-- SPEED (Presets + Custom) -->
+                        <Button x:Name="BackToEffectsButton" Content="&#x2190; BACK TO EFFECTS" Style="{StaticResource FlatButton}"
+                                HorizontalAlignment="Stretch" Click="BtnBackToEffects_Click" Margin="0,0,0,22"/>
+
+                        <!-- SPEED (Presets config + Custom) -->
                         <StackPanel x:Name="SpeedSection">
                             <Grid Margin="0,0,0,8">
                                 <Grid.ColumnDefinitions>
@@ -357,20 +717,29 @@
                             <Slider x:Name="SpeedSlider" Style="{StaticResource SharpSlider}" Minimum="10" Maximum="500" Value="150" Margin="0,0,0,24"/>
                         </StackPanel>
 
-                        <!-- BRIGHTNESS (always) -->
-                        <Grid Margin="0,0,0,8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Text="BRIGHTNESS" FontSize="10" Foreground="{StaticResource TextDimBrush}"/>
-                            <TextBlock Grid.Column="1" Text="{Binding ElementName=BrightnessSlider, Path=Value, StringFormat={}{0:0}%}" FontSize="10" Foreground="White"/>
-                        </Grid>
-                        <Slider x:Name="BrightnessSlider" Style="{StaticResource SharpSlider}" Minimum="5" Maximum="100" Value="100" Margin="0,0,0,26" ValueChanged="BrightnessSlider_ValueChanged"/>
+                        <!-- BRIGHTNESS (Static, Custom, Presets config - hidden during Presets gallery) -->
+                        <StackPanel x:Name="BrightnessRow">
+                            <Grid Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="BRIGHTNESS" FontSize="10" Foreground="{StaticResource TextDimBrush}"/>
+                                <TextBlock Grid.Column="1" Text="{Binding ElementName=BrightnessSlider, Path=Value, StringFormat={}{0:0}%}" FontSize="10" Foreground="White"/>
+                            </Grid>
+                            <Slider x:Name="BrightnessSlider" Style="{StaticResource SharpSlider}" Minimum="5" Maximum="100" Value="100" Margin="0,0,0,26" ValueChanged="BrightnessSlider_ValueChanged"/>
+                        </StackPanel>
 
-                        <!-- EFFECT COLOR (Breathing / Blink / Heartbeat, within Presets) -->
+                        <!-- EFFECT COLOR (Breathing / Blink / Heartbeat / Reactive, within Presets) -->
                         <StackPanel x:Name="EffectColorSection">
                             <TextBlock Text="EFFECT COLOR" FontSize="10" Foreground="{StaticResource TextDimBrush}" Margin="0,0,0,10"/>
+
+                            <!-- Only relevant for Reactive - toggled visible/collapsed from code
+                                 behind (UpdateEffectColorVisibility), same as everywhere else in
+                                 this panel, rather than a XAML DataTrigger. -->
+                            <CheckBox x:Name="RandomizeColorsCheckBox" Content="RANDOMIZE COLORS" Foreground="White" FontSize="12"
+                                      Margin="0,0,0,14" Checked="RandomizeColorsCheckBox_Changed" Unchecked="RandomizeColorsCheckBox_Changed"/>
+
                             <Button x:Name="EffectColorSwatch" Height="40" Background="#00E5FF" Click="BtnPickEffectColor_Click"
                                     Content="CLICK TO CHOOSE..." Foreground="#0A0A0A" BorderThickness="0" Margin="0,0,0,26"/>
                         </StackPanel>
@@ -395,7 +764,7 @@
                 </ScrollViewer>
 
                 <!-- Apply / Stop -->
-                <Grid Grid.Row="1" Margin="24,0,24,24">
+                <Grid x:Name="ApplyStopBar" Grid.Row="1" Margin="24,0,24,24">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto"/>
                         <RowDefinition Height="Auto"/>
