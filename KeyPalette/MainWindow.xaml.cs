@@ -1,15 +1,13 @@
-﻿using System;
+using System;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Threading;
-using static System.Windows.Forms.VisualStyles.VisualStyleElement.ToolTip;
 
 namespace KeyPalette
 {
-    public enum UiMode { Static, Breathing, Rainbow, Blink, Heartbeat, Custom }
+    public enum UiMode { Static, Presets, Custom }
 
     public partial class MainWindow : Window
     {
@@ -41,30 +39,63 @@ namespace KeyPalette
             Closed += (_, _) => _engine.Dispose();
         }
 
-        // ---------------- Custom title bar chrome ----------------
+        // ---------------- Sharp ComboBox click-to-toggle ----------------
 
-        private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+        /// <summary>
+        /// SharpCombo's template has no ToggleButton, so opening the dropdown is done manually
+        /// here. The critical part: while the dropdown is open, WPF still routes the initial
+        /// mouse-down for a click on a popup item THROUGH the ComboBox first (it holds mouse
+        /// capture while open, to support click-outside-to-close). If we unconditionally toggled
+        /// IsDropDownOpen and marked the event Handled on every click, that would close the
+        /// dropdown and swallow the event before the ComboBoxItem underneath ever got a chance
+        /// to register the click as a selection - which was exactly the "selection never
+        /// updates" bug. So this only opens the dropdown when the click did NOT land on an item
+        /// inside the already-open popup; clicks on items are left completely alone.
+        /// </summary>
+        private void Combo_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
         {
-            if (e.ClickCount == 2)
+            if (sender is not ComboBox comboBox) return;
+
+            if (comboBox.IsDropDownOpen && IsClickOnComboBoxItem(e.OriginalSource as DependencyObject))
             {
-                WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+                // Let the click reach the ComboBoxItem normally - don't touch IsDropDownOpen,
+                // don't mark Handled.
+                return;
             }
-            else
-            {
-                DragMove();
-            }
+
+            comboBox.IsDropDownOpen = !comboBox.IsDropDownOpen;
+            e.Handled = true;
         }
 
-        private void BtnMinimize_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
+        /// <summary>
+        /// Walks up from the click's original source looking for a ComboBoxItem ancestor.
+        /// Note: this deliberately does NOT look for a Popup ancestor. A Popup's content sits
+        /// under a separate PopupRoot (its own visual tree layer, backed by a different HWND),
+        /// so VisualTreeHelper.GetParent hits a dead end at PopupRoot and never reaches the
+        /// Popup control itself - that was the bug in the previous version. A ComboBoxItem,
+        /// however, is fully contained WITHIN that same popup-content visual tree (it's just a
+        /// couple of hops up from whatever was actually clicked - a TextBlock, a Border, etc.),
+        /// so VisualTreeHelper reaches it without ever needing to cross that boundary.
+        /// </summary>
+        private static bool IsClickOnComboBoxItem(DependencyObject? source)
+        {
+            while (source != null)
+            {
+                if (source is ComboBoxItem) return true;
 
-        private void BtnMaximizeRestore_Click(object sender, RoutedEventArgs e) =>
-            WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
+                // VisualTreeHelper only walks Visual/Visual3D nodes; fall back to the logical
+                // tree for anything else (defensive - in practice everything clickable here is
+                // a Visual, but this keeps the walk from throwing if that's ever not true).
+                source = source is Visual or System.Windows.Media.Media3D.Visual3D
+                    ? VisualTreeHelper.GetParent(source)
+                    : LogicalTreeHelper.GetParent(source);
+            }
+            return false;
+        }
 
-        private void BtnClose_Click(object sender, RoutedEventArgs e) => Close();
+        // ---------------- Sidebar mode navigation (3 tabs) ----------------
 
-        // ---------------- Sidebar mode navigation ----------------
-
-        private Button[] AllTabs => new[] { TabStatic, TabBreathing, TabRainbow, TabBlink, TabHeartbeat, TabCustom };
+        private Button[] AllTabs => new[] { TabStatic, TabPresets, TabCustom };
 
         private void SidebarTab_Click(object sender, RoutedEventArgs e)
         {
@@ -87,17 +118,56 @@ namespace KeyPalette
             }
 
             QuickColorsSection.Visibility = mode == UiMode.Static ? Visibility.Visible : Visibility.Collapsed;
+            PresetsSection.Visibility = mode == UiMode.Presets ? Visibility.Visible : Visibility.Collapsed;
             SpeedSection.Visibility = mode == UiMode.Static ? Visibility.Collapsed : Visibility.Visible;
-            EffectColorSection.Visibility =
-                (mode == UiMode.Breathing || mode == UiMode.Blink || mode == UiMode.Heartbeat)
-                    ? Visibility.Visible : Visibility.Collapsed;
             CustomSequenceSection.Visibility = mode == UiMode.Custom ? Visibility.Visible : Visibility.Collapsed;
 
+            UpdateEffectColorVisibility();
+
             PropertiesHeader.Text = mode.ToString().ToUpperInvariant();
-            ModeLabel.Text = mode.ToString().ToUpperInvariant();
+            UpdateModeLabel();
 
             _engine.StopEffect();
             StatusLabel.Text = "STATUS: IDLE";
+        }
+
+        /// <summary>Effect Color only makes sense for Presets mode, and only for the three
+        /// preset effects that pulse a single color (Rainbow sweeps every hue, so it's excluded).</summary>
+        private void UpdateEffectColorVisibility()
+        {
+            if (EffectColorSection == null || PresetEffectSelector == null) return;
+
+            if (_mode != UiMode.Presets)
+            {
+                EffectColorSection.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            string selected = (PresetEffectSelector.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "";
+            EffectColorSection.Visibility = selected is "Breathing" or "Blink" or "Heartbeat"
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        }
+
+        private void PresetEffectSelector_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            UpdateEffectColorVisibility();
+            UpdateModeLabel();
+        }
+
+        private void UpdateModeLabel()
+        {
+            if (ModeLabel == null || PresetEffectSelector == null) return;
+
+            if (_mode == UiMode.Presets)
+            {
+                string selected = (PresetEffectSelector.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "";
+                ModeLabel.Text = $"PRESETS: {selected.ToUpperInvariant()}";
+            }
+            else
+            {
+                ModeLabel.Text = _mode.ToString().ToUpperInvariant();
+            }
         }
 
         // ---------------- Settings window (hardware / DLL setup) ----------------
@@ -304,14 +374,14 @@ namespace KeyPalette
             RefreshSequencePanel();
         }
 
-        // ---------------- Presets ----------------
+        // ---------------- Saved custom presets ----------------
 
         private void RefreshPresetList()
         {
             var presets = PresetStore.LoadAll();
-            PresetCombo.ItemsSource = null;
-            PresetCombo.ItemsSource = presets.Select(p => p.Name).ToList();
-            if (PresetCombo.Items.Count > 0) PresetCombo.SelectedIndex = 0;
+            SavedPresetCombo.ItemsSource = null;
+            SavedPresetCombo.ItemsSource = presets.Select(p => p.Name).ToList();
+            if (SavedPresetCombo.Items.Count > 0) SavedPresetCombo.SelectedIndex = 0;
         }
 
         private void BtnSavePreset_Click(object sender, RoutedEventArgs e)
@@ -342,7 +412,7 @@ namespace KeyPalette
 
         private void BtnLoadPreset_Click(object sender, RoutedEventArgs e)
         {
-            if (PresetCombo.SelectedItem is not string name) return;
+            if (SavedPresetCombo.SelectedItem is not string name) return;
 
             var preset = PresetStore.LoadAll().FirstOrDefault(p => p.Name == name);
             if (preset == null) return;
@@ -368,7 +438,7 @@ namespace KeyPalette
 
         private void BtnDeletePreset_Click(object sender, RoutedEventArgs e)
         {
-            if (PresetCombo.SelectedItem is not string name) return;
+            if (SavedPresetCombo.SelectedItem is not string name) return;
 
             var presets = PresetStore.LoadAll();
             presets.RemoveAll(p => p.Name == name);
@@ -395,25 +465,21 @@ namespace KeyPalette
                     StatusLabel.Text = "STATUS: STATIC COLOR APPLIED";
                     break;
 
-                case UiMode.Breathing:
-                    _engine.StartEffect(EffectType.Breathing, speed);
-                    StatusLabel.Text = "STATUS: RUNNING BREATHING";
-                    break;
-
-                case UiMode.Rainbow:
-                    _engine.StartEffect(EffectType.Rainbow, speed);
-                    StatusLabel.Text = "STATUS: RUNNING RAINBOW";
-                    break;
-
-                case UiMode.Blink:
-                    _engine.StartEffect(EffectType.Blink, speed);
-                    StatusLabel.Text = "STATUS: RUNNING BLINK";
-                    break;
-
-                case UiMode.Heartbeat:
-                    _engine.StartEffect(EffectType.Heartbeat, speed);
-                    StatusLabel.Text = "STATUS: RUNNING HEARTBEAT";
-                    break;
+                case UiMode.Presets:
+                    {
+                        string selected = (PresetEffectSelector.SelectedItem as ComboBoxItem)?.Content?.ToString() ?? "Breathing";
+                        EffectType effect = selected switch
+                        {
+                            "Breathing" => EffectType.Breathing,
+                            "Rainbow" => EffectType.Rainbow,
+                            "Blink" => EffectType.Blink,
+                            "Heartbeat" => EffectType.Heartbeat,
+                            _ => EffectType.Breathing
+                        };
+                        _engine.StartEffect(effect, speed);
+                        StatusLabel.Text = $"STATUS: RUNNING {selected.ToUpperInvariant()}";
+                        break;
+                    }
 
                 case UiMode.Custom:
                     _engine.StartEffect(EffectType.Custom, speed);
