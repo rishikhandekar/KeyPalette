@@ -245,7 +245,7 @@ namespace KeyPalette
         /// <summary>Effect Color only makes sense once an effect is actually picked (Presets
         /// config state), and for the four effects that use a single flash/pulse color
         /// (Rainbow sweeps every hue and Fire always randomizes its own ember shades, so both
-        /// are excluded). Reactive additionally gets the Randomize Colors checkbox, and hides
+        /// are excluded). Those same four effects also get the Multi Colors checkbox, and hide
         /// the swatch itself while that's checked since a fixed color is meaningless then.</summary>
         private void UpdateEffectColorVisibility()
         {
@@ -255,14 +255,13 @@ namespace KeyPalette
             bool effectHasColor = _selectedPresetEffect is "Breathing" or "Blink" or "Heartbeat" or "Reactive";
             EffectColorSection.Visibility = isPresetsConfig && effectHasColor ? Visibility.Visible : Visibility.Collapsed;
 
-            bool isReactive = _selectedPresetEffect == "Reactive";
-            RandomizeColorsCheckBox.Visibility = isReactive ? Visibility.Visible : Visibility.Collapsed;
+            MultiColorsCheckBox.Visibility = effectHasColor ? Visibility.Visible : Visibility.Collapsed;
 
-            bool hideSwatchForRandom = isReactive && RandomizeColorsCheckBox.IsChecked == true;
-            EffectColorSwatch.Visibility = hideSwatchForRandom ? Visibility.Collapsed : Visibility.Visible;
+            bool hideSwatchForMultiColor = effectHasColor && MultiColorsCheckBox.IsChecked == true;
+            EffectColorSwatch.Visibility = hideSwatchForMultiColor ? Visibility.Collapsed : Visibility.Visible;
         }
 
-        private void RandomizeColorsCheckBox_Changed(object sender, RoutedEventArgs e)
+        private void MultiColorsCheckBox_Changed(object sender, RoutedEventArgs e)
         {
             UpdateEffectColorVisibility();
         }
@@ -588,7 +587,7 @@ namespace KeyPalette
                             "Reactive" => EffectType.Reactive,
                             _ => EffectType.Breathing
                         };
-                        _engine.RandomizeReactiveColor = RandomizeColorsCheckBox.IsChecked == true;
+                        _engine.UseMultiColorMode = MultiColorsCheckBox.IsChecked == true;
                         _engine.StartEffect(effect, speed);
                         StatusLabel.Text = $"STATUS: RUNNING {_selectedPresetEffect.ToUpperInvariant()}";
                         break;

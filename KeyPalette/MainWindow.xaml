@@ -737,8 +737,8 @@
                             <!-- Only relevant for Reactive - toggled visible/collapsed from code
                                  behind (UpdateEffectColorVisibility), same as everywhere else in
                                  this panel, rather than a XAML DataTrigger. -->
-                            <CheckBox x:Name="RandomizeColorsCheckBox" Content="RANDOMIZE COLORS" Foreground="White" FontSize="12"
-                                      Margin="0,0,0,14" Checked="RandomizeColorsCheckBox_Changed" Unchecked="RandomizeColorsCheckBox_Changed"/>
+                            <CheckBox x:Name="MultiColorsCheckBox" Content="MULTI COLORS" Foreground="White" FontSize="12"
+                                      Margin="0,0,0,14" Checked="MultiColorsCheckBox_Changed" Unchecked="MultiColorsCheckBox_Changed"/>
 
                             <Button x:Name="EffectColorSwatch" Height="40" Background="#00E5FF" Click="BtnPickEffectColor_Click"
                                     Content="CLICK TO CHOOSE..." Foreground="#0A0A0A" BorderThickness="0" Margin="0,0,0,26"/>

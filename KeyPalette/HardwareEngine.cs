@@ -80,15 +80,45 @@ namespace KeyPalette
         public double Brightness { get; set; } = 1.0;
 
         /// <summary>
-        /// Reactive mode: when true, every keystroke flashes a brand-new random RGB color
-        /// instead of the fixed <see cref="BaseColor"/>. Read fresh on each strike, so it can be
-        /// toggled live while Reactive is already running.
+        /// Multi Color mode: when true, Reactive, Breathing, Blink, and Heartbeat all cycle
+        /// through <see cref="MultiColorPalette"/> instead of using the fixed
+        /// <see cref="BaseColor"/>. Read fresh on each strike/frame, so it can be toggled live
+        /// while an effect is already running.
         /// </summary>
-        public bool RandomizeReactiveColor { get; set; }
+        public bool UseMultiColorMode { get; set; }
+
+        /// <summary>
+        /// Fixed, good-looking color sequence used by Multi Color mode: Red, Orange, Yellow,
+        /// Green, Light Blue, Dark Blue, Purple, Pink.
+        /// </summary>
+        private static readonly (byte r, byte g, byte b)[] MultiColorPalette =
+        {
+            (0xFF, 0x00, 0x00), // Red
+            (0xFF, 0xA5, 0x00), // Orange
+            (0xFF, 0xFF, 0x00), // Yellow
+            (0x00, 0xFF, 0x00), // Green
+            (0xAD, 0xD8, 0xE6), // Light Blue
+            (0x00, 0x00, 0x8B), // Dark Blue
+            (0x80, 0x00, 0x80), // Purple
+            (0xFF, 0xC0, 0xCB), // Pink
+        };
+
+        /// <summary>Cursor into <see cref="MultiColorPalette"/>, shared by Reactive strikes and
+        /// the Breathing/Blink/Heartbeat pulse loop so Multi Color mode always advances
+        /// sequentially through the palette regardless of which effect is driving it.</summary>
+        private int _multiColorIndex;
+
+        /// <summary>Returns the color at the current palette cursor, then advances the cursor
+        /// (wrapping back to 0 at the end of the palette).</summary>
+        private (byte r, byte g, byte b) NextMultiColor()
+        {
+            var color = MultiColorPalette[_multiColorIndex];
+            _multiColorIndex = (_multiColorIndex + 1) % MultiColorPalette.Length;
+            return color;
+        }
 
         private volatile bool _reactiveActive;
         private CancellationTokenSource? _reactiveFadeCts;
-        private readonly Random _reactiveRandom = new();
 
         /// <summary>
         /// Tries the app folder and the common Acer install locations first.
@@ -237,16 +267,17 @@ namespace KeyPalette
 
         /// <summary>
         /// Called by the global keyboard hook on every keystroke while Reactive is running.
-        /// Immediately flashes the target color (BaseColor, or a fresh random one if
-        /// <see cref="RandomizeReactiveColor"/> is set), then fades the whole backlight back to
-        /// black over ~180ms. A no-op if Reactive isn't the active effect, so the hook can call
-        /// this unconditionally on every keystroke without checking UI state itself.
+        /// Immediately flashes the target color (BaseColor, or the next color in
+        /// <see cref="MultiColorPalette"/> if <see cref="UseMultiColorMode"/> is set), then fades
+        /// the whole backlight back to black over ~180ms. A no-op if Reactive isn't the active
+        /// effect, so the hook can call this unconditionally on every keystroke without checking
+        /// UI state itself.
         /// </summary>
         public void ReactiveStrike()
         {
             if (!_reactiveActive) return;
 
-            var (r, g, b) = RandomizeReactiveColor ? RandomFullColor(_reactiveRandom) : BaseColor;
+            var (r, g, b) = UseMultiColorMode ? NextMultiColor() : BaseColor;
 
             // Fast typing re-triggers this far quicker than a single fade takes to finish -
             // cancel whatever fade is still in flight so the new flash always starts clean from
@@ -282,9 +313,6 @@ namespace KeyPalette
             }
         }
 
-        private static (byte r, byte g, byte b) RandomFullColor(Random rng) =>
-            ((byte)rng.Next(256), (byte)rng.Next(256), (byte)rng.Next(256));
-
         private async Task AnimationLoop(EffectType effect, int speedMs, CancellationToken token)
         {
             const int frameIntervalMs = 20; // ~50 FPS logical tick
@@ -305,15 +333,40 @@ namespace KeyPalette
             var firePreviousColor = fireTargetColor;
             double firePrevPhase = 0;
 
+            // Breathing/Blink/Heartbeat share this same "0..1 per pulse" phase shape. In Multi
+            // Color mode we don't touch BaseColor at all - instead we watch for the phase
+            // wrapping back to the start of a new pulse and advance the shared palette cursor
+            // at that moment, so each full breath/blink/beat gets the next color in sequence.
+            double pulsePrevPhase = 0;
+
             while (!token.IsCancellationRequested)
             {
+                bool isPulseEffect = effect is EffectType.Breathing or EffectType.Blink or EffectType.Heartbeat;
+                double effectiveHue = baseHue;
+                double effectiveSat = baseSat;
+                if (isPulseEffect)
+                {
+                    double pulsePhase = (t % cycleSeconds) / cycleSeconds;
+                    if (UseMultiColorMode && pulsePhase < pulsePrevPhase)
+                    {
+                        _multiColorIndex = (_multiColorIndex + 1) % MultiColorPalette.Length;
+                    }
+                    pulsePrevPhase = pulsePhase;
+
+                    if (UseMultiColorMode)
+                    {
+                        var mc = MultiColorPalette[_multiColorIndex];
+                        (effectiveHue, effectiveSat, _) = RgbToHsv(mc.r, mc.g, mc.b);
+                    }
+                }
+
                 switch (effect)
                 {
                     case EffectType.Breathing:
                         {
                             double phase = (t % cycleSeconds) / cycleSeconds;
                             double brightness = (Math.Sin(phase * 2 * Math.PI - Math.PI / 2) + 1) / 2;
-                            var (r, g, b) = HsvToRgb(baseHue, baseSat, brightness);
+                            var (r, g, b) = HsvToRgb(effectiveHue, effectiveSat, brightness);
                             SetColor(r, g, b);
                             break;
                         }
@@ -329,7 +382,7 @@ namespace KeyPalette
                     case EffectType.Blink:
                         {
                             double phase = (t % cycleSeconds) / cycleSeconds;
-                            var (r, g, b) = HsvToRgb(baseHue, baseSat, phase < 0.5 ? 1.0 : 0.0);
+                            var (r, g, b) = HsvToRgb(effectiveHue, effectiveSat, phase < 0.5 ? 1.0 : 0.0);
                             SetColor(r, g, b);
                             break;
                         }
@@ -345,7 +398,7 @@ namespace KeyPalette
                                 < 0.50 => 0.7 - EaseOut((phase - 0.35) / 0.15) * 0.7,
                                 _ => 0.0
                             };
-                            var (r, g, b) = HsvToRgb(baseHue, baseSat, Math.Clamp(brightness, 0, 1));
+                            var (r, g, b) = HsvToRgb(effectiveHue, effectiveSat, Math.Clamp(brightness, 0, 1));
                             SetColor(r, g, b);
                             break;
                         }
