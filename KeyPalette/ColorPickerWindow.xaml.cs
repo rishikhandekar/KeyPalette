@@ -19,11 +19,17 @@ namespace KeyPalette
     public partial class ColorPickerWindow : Window
     {
         private const int WheelSize = 240;
-        private const double WheelRadius = WheelSize / 2.0;
+        private const double WheelRadius = WheelSize / 2.0;       // outer radius of the ring (~120px)
+        private const double WheelInnerRadius = 70;                 // inner radius - hollow center starts here
+        private const double WheelCenterlineRadius = (WheelRadius + WheelInnerRadius) / 2.0; // ~95px - where the thumb always sits
         private const double ThumbRadius = 8;
 
         private double _hue;        // 0-360
-        private double _saturation; // 0-1
+        private double _saturation; // 0-1. Locked to 1.0 by every ring interaction (see
+                                     // UpdateHueSaturationFromPoint) - can still end up lower than
+                                     // 1.0 if the user types a desaturated RGB/hex value directly
+                                     // into the text boxes, since that path intentionally isn't
+                                     // restricted (see SetFromRgb).
         private double _value;      // 0-1 (brightness)
 
         // Guards RefreshAllFromHsv's own writes to the Slider/TextBoxes from re-triggering their
@@ -68,11 +74,15 @@ namespace KeyPalette
 
         /// <summary>
         /// Painted once - the wheel's own pixels never change after this (only the thumb
-        /// position and the brightness slider move). For every pixel inside the circle: the
-        /// angle from center gives hue (0-360), the distance from center gives saturation
-        /// (0-1, clamped at the rim), value is fixed at 1.0. Pixels outside the circle are left
-        /// fully transparent so the wheel reads as round against the dark window background
-        /// rather than sitting in a visible square.
+        /// position and the brightness slider move). This is a HOLLOW RING, not a solid disc:
+        /// for every pixel between WheelInnerRadius and WheelRadius, the angle from center gives
+        /// hue (0-360) - saturation is locked to 1.0 for every one of those pixels regardless of
+        /// how far from center they sit, so there are no pastel/washed-out colors anywhere on
+        /// the ring (unlike a solid saturation-by-distance wheel, where dragging toward the
+        /// center produces near-white colors that read poorly on a single-zone RGB backlight).
+        /// Value is fixed at 1.0 here too; brightness is the separate slider, applied afterward.
+        /// Pixels outside the ring (either past the outer edge, or inside the hollow center) are
+        /// left fully transparent.
         /// </summary>
         private void BuildWheelBitmap()
         {
@@ -89,13 +99,13 @@ namespace KeyPalette
                     double r = Math.Sqrt(dx * dx + dy * dy);
                     int idx = y * stride + x * 4;
 
-                    if (r <= WheelRadius)
+                    if (r >= WheelInnerRadius && r <= WheelRadius)
                     {
                         double angle = Math.Atan2(dy, dx) * 180.0 / Math.PI;
                         if (angle < 0) angle += 360.0;
-                        double sat = Math.Min(1.0, r / WheelRadius);
 
-                        var (rr, gg, bb) = HsvToRgb(angle, sat, 1.0);
+                        // Saturation and value both fixed - only hue (angle) varies across the ring.
+                        var (rr, gg, bb) = HsvToRgb(angle, 1.0, 1.0);
 
                         // WriteableBitmap with Bgra32 wants byte order Blue, Green, Red, Alpha.
                         pixels[idx + 0] = bb;
@@ -105,7 +115,7 @@ namespace KeyPalette
                     }
                     else
                     {
-                        pixels[idx + 3] = 0; // transparent outside the circle
+                        pixels[idx + 3] = 0; // transparent: outside the outer edge, or inside the hollow center
                     }
                 }
             }
@@ -135,41 +145,40 @@ namespace KeyPalette
             WheelCanvas.ReleaseMouseCapture();
         }
 
-        /// <summary>Converts a click/drag point (in WheelCanvas coordinates) into hue+saturation,
-        /// clamping the radius to the wheel's edge so dragging past the rim still tracks the
-        /// nearest in-circle point instead of losing the cursor.</summary>
+        /// <summary>Converts a click/drag point (in WheelCanvas coordinates) into a hue angle.
+        /// Saturation is no longer derived from the click's distance from center - it's locked
+        /// to 1.0 everywhere on the ring (see BuildWheelBitmap) - so only the angle matters here,
+        /// and the thumb always snaps to the ring's centerline regardless of how far in or out
+        /// the actual click/drag point was.</summary>
         private void UpdateHueSaturationFromPoint(Point p)
         {
             double dx = p.X - WheelRadius;
             double dy = p.Y - WheelRadius;
-            double r = Math.Min(WheelRadius, Math.Sqrt(dx * dx + dy * dy));
 
             double angle = Math.Atan2(dy, dx) * 180.0 / Math.PI;
             if (angle < 0) angle += 360.0;
 
             _hue = angle;
-            _saturation = r / WheelRadius;
+            _saturation = 1.0; // locked - see BuildWheelBitmap
 
-            // The pointer already tells us exactly where the thumb should sit, so we place it
-            // directly from the clamped point rather than round-tripping back through
-            // trigonometry - avoids any rounding jitter while dragging near the rim.
-            double clampedX = WheelRadius + r * Math.Cos(angle * Math.PI / 180.0);
-            double clampedY = WheelRadius + r * Math.Sin(angle * Math.PI / 180.0);
+            double clampedX = WheelRadius + WheelCenterlineRadius * Math.Cos(angle * Math.PI / 180.0);
+            double clampedY = WheelRadius + WheelCenterlineRadius * Math.Sin(angle * Math.PI / 180.0);
             Canvas.SetLeft(WheelThumb, clampedX - ThumbRadius);
             Canvas.SetTop(WheelThumb, clampedY - ThumbRadius);
 
             RefreshAllFromHsv(updateWheelThumb: false, updateBrightnessSlider: false, updateTextBoxes: true);
         }
 
-        /// <summary>Repositions the thumb from (_hue, _saturation) - used whenever the color
-        /// changed via something other than dragging the wheel itself (typing hex/RGB, or the
-        /// initial startColor), since those don't already have a screen point to work from.</summary>
+        /// <summary>Repositions the thumb from _hue - used whenever the color changed via
+        /// something other than dragging the ring itself (typing hex/RGB, or the initial
+        /// startColor), since those don't already have a screen point to work from. Always
+        /// places the thumb on the ring's centerline at that hue's angle; saturation isn't a
+        /// factor since it's locked to 1.0 everywhere on the ring.</summary>
         private void UpdateThumbPositionFromHsv()
         {
             double angleRad = _hue * Math.PI / 180.0;
-            double r = _saturation * WheelRadius;
-            double x = WheelRadius + r * Math.Cos(angleRad);
-            double y = WheelRadius + r * Math.Sin(angleRad);
+            double x = WheelRadius + WheelCenterlineRadius * Math.Cos(angleRad);
+            double y = WheelRadius + WheelCenterlineRadius * Math.Sin(angleRad);
             Canvas.SetLeft(WheelThumb, x - ThumbRadius);
             Canvas.SetTop(WheelThumb, y - ThumbRadius);
         }
