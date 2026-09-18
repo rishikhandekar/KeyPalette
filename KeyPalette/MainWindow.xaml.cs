@@ -21,11 +21,15 @@ namespace KeyPalette
         private bool _presetShowingGallery = true;
 
         /// <summary>The effect chosen from the gallery ("Breathing", "Rainbow", "Blink",
-        /// "Heartbeat", "Fire", "Reactive").</summary>
+        /// "Heartbeat", "Fire", "Reactive", "AmbientReactive").</summary>
         private string _selectedPresetEffect = "Breathing";
 
         private string _lastHwStatus = "Not connected yet.";
         private TextBlock? _settingsHwLabel;
+
+        /// <summary>Guards SleepTimeSlider/SleepTimeTextBox against re-triggering each other
+        /// while one of them is programmatically updating the other.</summary>
+        private bool _updatingSleepControls;
 
         private static readonly SolidColorBrush InactiveTabForeground = new(Color.FromRgb(0xAA, 0xAA, 0xAA));
         private static readonly SolidColorBrush ActiveTabForeground = Brushes.White;
@@ -54,6 +58,7 @@ namespace KeyPalette
             RegisterName("FireStopMid", fireBrush.GradientStops[1]);
             RegisterName("FireStopBottom", fireBrush.GradientStops[2]);
             RegisterName("ReactiveKeyBrush", FindResource("ReactiveKeyBrush"));
+            RegisterName("AmbientReactiveKeyBrush", FindResource("AmbientReactiveKeyBrush"));
 
             _engine.StatusChanged += OnHardwareStatus;
             _engine.ColorChanged += OnColorChanged;
@@ -81,6 +86,7 @@ namespace KeyPalette
                 TryConnect();
                 RefreshSequencePanel();
                 RefreshPresetList();
+                ApplySleepMinutes(0, updateSlider: true);
                 SetMode(UiMode.Static);
             };
             Closed += (_, _) =>
@@ -208,9 +214,10 @@ namespace KeyPalette
             QuickColorsSection.Visibility = _mode == UiMode.Static ? Visibility.Visible : Visibility.Collapsed;
             PresetsPlaceholderSection.Visibility = isPresetsGallery ? Visibility.Visible : Visibility.Collapsed;
             BackToEffectsButton.Visibility = isPresetsConfig ? Visibility.Visible : Visibility.Collapsed;
-            // Speed drives a continuous cycle (breathing/blink/rainbow/fire/etc.) that Reactive
-            // doesn't have - it fires from keystrokes, not a timer - so hide it there.
-            bool speedApplies = _mode == UiMode.Custom || (isPresetsConfig && _selectedPresetEffect != "Reactive");
+            // Speed drives a continuous cycle (breathing/blink/rainbow/fire/etc.) that the
+            // Reactive-family effects don't have - they fire from keystrokes, not a timer - so
+            // hide it there.
+            bool speedApplies = _mode == UiMode.Custom || (isPresetsConfig && _selectedPresetEffect is not ("Reactive" or "AmbientReactive"));
             SpeedSection.Visibility = speedApplies ? Visibility.Visible : Visibility.Collapsed;
             CustomSequenceSection.Visibility = _mode == UiMode.Custom ? Visibility.Visible : Visibility.Collapsed;
             BrightnessRow.Visibility = (_mode == UiMode.Static || _mode == UiMode.Custom || isPresetsConfig)
@@ -563,6 +570,57 @@ namespace KeyPalette
             _engine.Brightness = BrightnessSlider.Value / 100.0;
         }
 
+        // ---------------- Sleep Time (Slider <-> TextBox, both drive _engine.SleepMinutes) ----------------
+
+        private void SleepTimeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_updatingSleepControls) return;
+            ApplySleepMinutes((int)Math.Round(SleepTimeSlider.Value), updateSlider: false);
+        }
+
+        private void SleepTimeTextBox_Committed(object sender, RoutedEventArgs e) => CommitSleepTimeText();
+
+        private void SleepTimeTextBox_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Key != Key.Enter) return;
+            CommitSleepTimeText();
+            Keyboard.ClearFocus(); // triggers LostFocus too, but this makes Enter feel immediate
+        }
+
+        /// <summary>Parses whatever's currently typed in the box and applies it. Committing on
+        /// Enter/LostFocus (rather than every keystroke in TextChanged) means a half-typed value
+        /// like "" or "6" while backspacing to type "60" is never fought over mid-edit.</summary>
+        private void CommitSleepTimeText()
+        {
+            if (int.TryParse(SleepTimeTextBox.Text.Trim(), out int minutes))
+            {
+                ApplySleepMinutes(Math.Clamp(minutes, 0, 60), updateSlider: true);
+            }
+            else
+            {
+                // Not a valid number - just redisplay whatever the setting actually still is,
+                // rather than leaving garbled text sitting in the box.
+                ApplySleepMinutes((int)Math.Round(SleepTimeSlider.Value), updateSlider: true);
+            }
+        }
+
+        /// <summary>Single source of truth for pushing a Sleep Time value out to the slider, the
+        /// text box, and the engine together, so the three can never drift out of sync.</summary>
+        private void ApplySleepMinutes(int minutes, bool updateSlider)
+        {
+            _updatingSleepControls = true;
+            try
+            {
+                if (updateSlider) SleepTimeSlider.Value = minutes;
+                SleepTimeTextBox.Text = minutes == 0 ? "Never Off" : minutes.ToString();
+                _engine.SleepMinutes = minutes;
+            }
+            finally
+            {
+                _updatingSleepControls = false;
+            }
+        }
+
         private void BtnApply_Click(object sender, RoutedEventArgs e)
         {
             int speed = (int)SpeedSlider.Value;
@@ -585,6 +643,7 @@ namespace KeyPalette
                             "Heartbeat" => EffectType.Heartbeat,
                             "Fire" => EffectType.Fire,
                             "Reactive" => EffectType.Reactive,
+                            "AmbientReactive" => EffectType.AmbientReactive,
                             _ => EffectType.Breathing
                         };
                         _engine.UseMultiColorMode = MultiColorsCheckBox.IsChecked == true;

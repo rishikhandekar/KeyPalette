@@ -43,6 +43,10 @@
              intervals (see ReactiveCardStoryboard) to suggest bursts of typing. -->
         <SolidColorBrush x:Key="ReactiveKeyBrush" x:Name="ReactiveKeyBrush" Color="#FFAA00"/>
 
+        <!-- Ambient Reactive: same idea as Reactive, but the preview never drops all the way to
+             black between flashes (see AmbientReactiveCardStoryboard) - it rests at a dim glow. -->
+        <SolidColorBrush x:Key="AmbientReactiveKeyBrush" x:Name="AmbientReactiveKeyBrush" Color="#00E5FF"/>
+
         <!-- ============== One shared mini-keyboard vector graphic ==============
              A compact grid of Rectangles laid out like a real laptop keyboard (function row,
              number row, QWERTY row, home row, shift row, bottom row with a wide spacebar - loosely
@@ -266,6 +270,24 @@
             </DoubleAnimationUsingKeyFrames>
         </Storyboard>
 
+        <!-- Ambient Reactive: unlike Reactive's flashes-from-near-black, this rests at a dim
+             0.3 baseline the whole time. Each burst still snaps up to full opacity instantly
+             (DiscreteDoubleKeyFrame - a real keystroke should feel immediate), but instead of
+             snapping back down it uses LinearDoubleKeyFrame to smoothly fade back to that 0.3
+             baseline, matching the engine's actual fade-to-dim-not-to-black behavior. -->
+        <Storyboard x:Key="AmbientReactiveCardStoryboard">
+            <DoubleAnimationUsingKeyFrames Storyboard.TargetName="AmbientReactiveKeyBrush" Storyboard.TargetProperty="Opacity"
+                                            RepeatBehavior="Forever">
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0.00" Value="0.3"/>
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0.10" Value="1.0"/>
+                <LinearDoubleKeyFrame KeyTime="0:0:0.35" Value="0.3"/>
+                <DiscreteDoubleKeyFrame KeyTime="0:0:0.55" Value="1.0"/>
+                <LinearDoubleKeyFrame KeyTime="0:0:0.80" Value="0.3"/>
+                <DiscreteDoubleKeyFrame KeyTime="0:0:1.10" Value="1.0"/>
+                <LinearDoubleKeyFrame KeyTime="0:0:1.35" Value="0.3"/>
+            </DoubleAnimationUsingKeyFrames>
+        </Storyboard>
+
         <!-- ============== Flat sharp button ============== -->
         <Style x:Key="FlatButton" TargetType="Button">
             <Setter Property="Background" Value="#1A1A1A"/>
@@ -401,6 +423,29 @@
             </Setter>
         </Style>
 
+        <!-- ============== Sharp text box (dark, flat, for the Sleep Time minutes field) ============== -->
+        <Style x:Key="SharpTextBox" TargetType="TextBox">
+            <Setter Property="Background" Value="#0A0A0A"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="CaretBrush" Value="White"/>
+            <Setter Property="BorderBrush" Value="{StaticResource PanelBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontSize" Value="11"/>
+            <Setter Property="Padding" Value="0,3,0,0"/>
+            <Setter Property="TextAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ScrollViewer x:Name="PART_ContentHost"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- ============== Sharp combo box (dark button + dark popup) ============== -->
         <!--
             Single Border does all the visible painting (one clean rectangle, no nested/double
@@ -516,6 +561,7 @@
             <BeginStoryboard Storyboard="{StaticResource RainbowCardStoryboard}"/>
             <BeginStoryboard Storyboard="{StaticResource FireCardStoryboard}"/>
             <BeginStoryboard Storyboard="{StaticResource ReactiveCardStoryboard}"/>
+            <BeginStoryboard Storyboard="{StaticResource AmbientReactiveCardStoryboard}"/>
         </EventTrigger>
     </Window.Triggers>
 
@@ -660,6 +706,16 @@
                                     <TextBlock Text="REACTIVE" FontSize="11" Foreground="White" HorizontalAlignment="Center" Margin="0,0,0,10"/>
                                 </StackPanel>
                             </Button>
+
+                            <Button Style="{StaticResource EffectCardButton}" Tag="AmbientReactive" Click="EffectCard_Click">
+                                <StackPanel>
+                                    <Border Height="90" Margin="10,10,10,6" Background="#0A0A0A">
+                                        <ContentControl ContentTemplate="{StaticResource MiniKeyboardTemplate}"
+                                                         Content="{StaticResource AmbientReactiveKeyBrush}"/>
+                                    </Border>
+                                    <TextBlock Text="AMBIENT REACTIVE" FontSize="11" Foreground="White" HorizontalAlignment="Center" Margin="0,0,0,10"/>
+                                </StackPanel>
+                            </Button>
                         </WrapPanel>
                     </StackPanel>
                 </ScrollViewer>
@@ -728,6 +784,27 @@
                                 <TextBlock Grid.Column="1" Text="{Binding ElementName=BrightnessSlider, Path=Value, StringFormat={}{0:0}%}" FontSize="10" Foreground="White"/>
                             </Grid>
                             <Slider x:Name="BrightnessSlider" Style="{StaticResource SharpSlider}" Minimum="5" Maximum="100" Value="100" Margin="0,0,0,26" ValueChanged="BrightnessSlider_ValueChanged"/>
+                        </StackPanel>
+
+                        <!-- SLEEP TIME (global - not tied to _mode/effect, always visible/active).
+                             Slider and TextBox both drive HardwareEngine.SleepMinutes; each keeps
+                             the other in sync (see SleepTimeSlider_ValueChanged / CommitSleepTimeText
+                             in the code-behind). 0 minutes reads as "Never Off" rather than "0". -->
+                        <StackPanel x:Name="SleepTimeSection">
+                            <Grid Margin="0,0,0,8">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="SLEEP TIME" FontSize="10" Foreground="{StaticResource TextDimBrush}"/>
+                                <TextBox x:Name="SleepTimeTextBox" Grid.Column="1" Width="76" Height="22"
+                                         Style="{StaticResource SharpTextBox}" Text="Never Off"
+                                         LostFocus="SleepTimeTextBox_Committed" KeyDown="SleepTimeTextBox_KeyDown"/>
+                            </Grid>
+                            <Slider x:Name="SleepTimeSlider" Style="{StaticResource SharpSlider}" Minimum="0" Maximum="60" Value="0"
+                                    Margin="0,0,0,4" ValueChanged="SleepTimeSlider_ValueChanged"/>
+                            <TextBlock Text="Fades the backlight off after this many minutes of no mouse/keyboard input anywhere on the machine. 0 = never."
+                                       FontSize="9" Foreground="{StaticResource TextDimBrush}" TextWrapping="Wrap" Margin="0,0,0,26"/>
                         </StackPanel>
 
                         <!-- EFFECT COLOR (Breathing / Blink / Heartbeat / Reactive, within Presets) -->

@@ -16,6 +16,7 @@ namespace KeyPalette
         Heartbeat,
         Fire,
         Reactive,
+        AmbientReactive,
         Custom
     }
 
@@ -88,19 +89,19 @@ namespace KeyPalette
         public bool UseMultiColorMode { get; set; }
 
         /// <summary>
-        /// Fixed, good-looking color sequence used by Multi Color mode: Red, Orange, Yellow,
-        /// Green, Light Blue, Dark Blue, Purple, Pink.
+        /// Custom color sequence used by Multi Color mode: Red, Orange, Yellow, Green,
+        /// Light Blue, Dark Blue, Purple, Pink.
         /// </summary>
         private static readonly (byte r, byte g, byte b)[] MultiColorPalette =
         {
             (0xFF, 0x00, 0x00), // Red
-            (0xFF, 0xA5, 0x00), // Orange
+            (0xFF, 0x53, 0x00), // Orange
             (0xFF, 0xFF, 0x00), // Yellow
             (0x00, 0xFF, 0x00), // Green
-            (0xAD, 0xD8, 0xE6), // Light Blue
+            (0x00, 0xE5, 0xFF), // Light Blue
             (0x00, 0x00, 0x8B), // Dark Blue
-            (0x80, 0x00, 0x80), // Purple
-            (0xFF, 0xC0, 0xCB), // Pink
+            (0x33, 0x00, 0xFF), // Purple
+            (0xFE, 0x01, 0xC5), // Pink
         };
 
         /// <summary>Cursor into <see cref="MultiColorPalette"/>, shared by Reactive strikes and
@@ -119,6 +120,57 @@ namespace KeyPalette
 
         private volatile bool _reactiveActive;
         private CancellationTokenSource? _reactiveFadeCts;
+
+        /// <summary>True while the currently-armed Reactive-family effect is AmbientReactive
+        /// rather than plain Reactive - changes what ReactiveStrike() fades back down to.</summary>
+        private bool _reactiveAmbient;
+
+        /// <summary>Rest brightness (as a fraction of full) that Ambient Reactive idles at
+        /// between keystrokes. 20-30% is enough to see the keyboard without it looking "on".</summary>
+        private const double AmbientReactiveDimLevel = 0.25;
+
+        // --- Sleep Time idle monitor ---
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct LASTINPUTINFO
+        {
+            public uint cbSize;
+            public uint dwTime;
+        }
+
+        [DllImport("user32.dll")]
+        private static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
+
+        [DllImport("kernel32.dll")]
+        private static extern uint GetTickCount();
+
+        /// <summary>
+        /// Minutes of true system idle time (mouse OR keyboard, anywhere on the machine - not
+        /// just KeyPalette) after which the backlight fades to off. 0 = never sleep. Checked
+        /// continuously by a background loop started for the lifetime of this engine, so it
+        /// applies no matter which effect (or none) is currently running.
+        /// </summary>
+        public double SleepMinutes { get; set; }
+
+        /// <summary>Last color actually requested via SetColor, BEFORE the Brightness/sleep
+        /// multipliers are applied. The sleep monitor re-sends this at a shrinking multiplier to
+        /// fade to black, and re-sends it once more at full multiplier to wake instantly -
+        /// without needing to know or care which effect produced it.</summary>
+        private (byte r, byte g, byte b) _lastRawColor = (0, 0, 0);
+
+        /// <summary>0.0-1.0 multiplier layered on top of the user's own Brightness setting,
+        /// driven purely by the sleep monitor. 1.0 = awake/no effect; ramps to 0.0 while
+        /// fading asleep.</summary>
+        private double _sleepMultiplier = 1.0;
+
+        private volatile bool _isAsleep;
+        private readonly CancellationTokenSource _sleepCts = new();
+        private readonly Task _sleepMonitorTask;
+
+        public HardwareEngine()
+        {
+            _sleepMonitorTask = Task.Run(() => SleepMonitorLoop(_sleepCts.Token));
+        }
 
         /// <summary>
         /// Tries the app folder and the common Acer install locations first.
@@ -202,9 +254,13 @@ namespace KeyPalette
         /// </summary>
         public void SetColor(byte r, byte g, byte b)
         {
+            // Recorded unconditionally (even if not connected) so the sleep monitor always knows
+            // what color to fade from/restore to once a connection does exist.
+            _lastRawColor = (r, g, b);
+
             if (!IsConnected) return;
 
-            double br = System.Math.Clamp(Brightness, 0.0, 1.0);
+            double br = System.Math.Clamp(Brightness, 0.0, 1.0) * System.Math.Clamp(_sleepMultiplier, 0.0, 1.0);
             byte sr = (byte)System.Math.Round(r * br);
             byte sg = (byte)System.Math.Round(g * br);
             byte sb = (byte)System.Math.Round(b * br);
@@ -238,12 +294,24 @@ namespace KeyPalette
         {
             StopEffect();
 
-            if (effect == EffectType.Reactive)
+            if (effect == EffectType.Reactive || effect == EffectType.AmbientReactive)
             {
-                // Reactive doesn't run a continuous tick loop like the others - it just sits
-                // armed and dark until GlobalKeyboardHook reports a keystroke via ReactiveStrike().
+                // Reactive-family effects don't run a continuous tick loop like the others -
+                // they just sit armed until GlobalKeyboardHook reports a keystroke via
+                // ReactiveStrike(). AmbientReactive additionally rests at a dim baseline instead
+                // of fully off, rather than going completely dark between keystrokes.
                 _reactiveActive = true;
-                SetColor(0, 0, 0);
+                _reactiveAmbient = effect == EffectType.AmbientReactive;
+
+                if (_reactiveAmbient)
+                {
+                    var (dr, dg, db) = ScaleColor(BaseColor, AmbientReactiveDimLevel);
+                    SetColor(dr, dg, db);
+                }
+                else
+                {
+                    SetColor(0, 0, 0);
+                }
                 return;
             }
 
@@ -254,6 +322,7 @@ namespace KeyPalette
         public void StopEffect()
         {
             _reactiveActive = false;
+            _reactiveAmbient = false;
             _reactiveFadeCts?.Cancel();
             _reactiveFadeCts?.Dispose();
             _reactiveFadeCts = null;
@@ -266,12 +335,13 @@ namespace KeyPalette
         }
 
         /// <summary>
-        /// Called by the global keyboard hook on every keystroke while Reactive is running.
-        /// Immediately flashes the target color (BaseColor, or the next color in
-        /// <see cref="MultiColorPalette"/> if <see cref="UseMultiColorMode"/> is set), then fades
-        /// the whole backlight back to black over ~180ms. A no-op if Reactive isn't the active
-        /// effect, so the hook can call this unconditionally on every keystroke without checking
-        /// UI state itself.
+        /// Called by the global keyboard hook on every keystroke while Reactive or
+        /// AmbientReactive is running. Immediately flashes the target color (BaseColor, or the
+        /// next color in <see cref="MultiColorPalette"/> if <see cref="UseMultiColorMode"/> is
+        /// set) at full brightness, then smoothly fades back over ~180ms - to fully off for
+        /// Reactive, or back down to the dim <see cref="AmbientReactiveDimLevel"/> baseline for
+        /// AmbientReactive. A no-op unless one of those two effects is active, so the hook can
+        /// call this unconditionally on every keystroke without checking UI state itself.
         /// </summary>
         public void ReactiveStrike()
         {
@@ -289,10 +359,11 @@ namespace KeyPalette
             previousCts?.Dispose();
 
             SetColor(r, g, b);
-            _ = FadeReactiveFlashAsync(r, g, b, cts.Token);
+            double restingFraction = _reactiveAmbient ? AmbientReactiveDimLevel : 0.0;
+            _ = FadeReactiveFlashAsync(r, g, b, restingFraction, cts.Token);
         }
 
-        private async Task FadeReactiveFlashAsync(byte r, byte g, byte b, CancellationToken token)
+        private async Task FadeReactiveFlashAsync(byte r, byte g, byte b, double restingFraction, CancellationToken token)
         {
             const int durationMs = 180;
             const int stepMs = 15;
@@ -303,8 +374,10 @@ namespace KeyPalette
                 for (int i = 1; i <= steps; i++)
                 {
                     await Task.Delay(stepMs, token);
-                    double remaining = 1.0 - (double)i / steps; // 1.0 -> 0.0 over the fade
-                    SetColor((byte)Math.Round(r * remaining), (byte)Math.Round(g * remaining), (byte)Math.Round(b * remaining));
+                    // 1.0 -> restingFraction over the fade (restingFraction is 0.0 for plain
+                    // Reactive, or the dim ambient baseline for AmbientReactive).
+                    double factor = 1.0 - ((double)i / steps) * (1.0 - restingFraction);
+                    SetColor((byte)Math.Round(r * factor), (byte)Math.Round(g * factor), (byte)Math.Round(b * factor));
                 }
             }
             catch (TaskCanceledException)
@@ -496,6 +569,16 @@ namespace KeyPalette
             );
         }
 
+        private static (byte r, byte g, byte b) ScaleColor((byte r, byte g, byte b) color, double factor)
+        {
+            factor = Math.Clamp(factor, 0, 1);
+            return (
+                (byte)Math.Round(color.r * factor),
+                (byte)Math.Round(color.g * factor),
+                (byte)Math.Round(color.b * factor)
+            );
+        }
+
         private static (byte r, byte g, byte b) HsvToRgb(double h, double s, double v)
         {
             h = ((h % 360) + 360) % 360;
@@ -539,9 +622,102 @@ namespace KeyPalette
             return (h, s, v);
         }
 
+        // ---------------- Sleep Time idle monitor ----------------
+
+        /// <summary>
+        /// Runs for the entire lifetime of the engine (not tied to any particular effect),
+        /// polling true system-wide idle time and fading the backlight to black once it exceeds
+        /// <see cref="SleepMinutes"/>, then instantly restoring it the moment new input arrives.
+        /// Because this only ever adjusts <see cref="_sleepMultiplier"/> and re-sends
+        /// <see cref="_lastRawColor"/> - rather than touching whatever effect is running - it
+        /// works transparently underneath Static, an animated loop, or Reactive/AmbientReactive.
+        /// </summary>
+        private async Task SleepMonitorLoop(CancellationToken token)
+        {
+            const int pollIntervalMs = 500;
+
+            while (!token.IsCancellationRequested)
+            {
+                try { await Task.Delay(pollIntervalMs, token); }
+                catch (TaskCanceledException) { break; }
+
+                double sleepMinutes = SleepMinutes;
+                if (sleepMinutes <= 0)
+                {
+                    // Sleep disabled - if we'd already dimmed for a previous setting, wake back up.
+                    if (_isAsleep) WakeInstantly();
+                    continue;
+                }
+
+                double idleMinutes = GetIdleTimeMs() / 60000.0;
+                if (idleMinutes >= sleepMinutes)
+                {
+                    if (!_isAsleep)
+                    {
+                        _isAsleep = true;
+                        await FadeAsleepAsync(token);
+                    }
+                }
+                else if (_isAsleep)
+                {
+                    // GetLastInputInfo's clock just reset - the user moved the mouse or typed.
+                    WakeInstantly();
+                }
+            }
+        }
+
+        private async Task FadeAsleepAsync(CancellationToken token)
+        {
+            const int durationMs = 800;
+            const int stepMs = 40;
+            int steps = durationMs / stepMs;
+            double start = _sleepMultiplier;
+
+            try
+            {
+                for (int i = 1; i <= steps; i++)
+                {
+                    await Task.Delay(stepMs, token);
+                    _sleepMultiplier = start + (0.0 - start) * i / steps;
+                    var (r, g, b) = _lastRawColor;
+                    SetColor(r, g, b);
+                }
+            }
+            catch (TaskCanceledException)
+            {
+                // Engine is shutting down mid-fade - nothing further to do.
+            }
+        }
+
+        /// <summary>Snaps straight back to full brightness - no fade-in, per spec: waking should
+        /// feel instant, only falling asleep should be gradual.</summary>
+        private void WakeInstantly()
+        {
+            _isAsleep = false;
+            _sleepMultiplier = 1.0;
+            var (r, g, b) = _lastRawColor;
+            SetColor(r, g, b);
+        }
+
+        private static uint GetIdleTimeMs()
+        {
+            var info = new LASTINPUTINFO { cbSize = (uint)Marshal.SizeOf<LASTINPUTINFO>() };
+            if (!GetLastInputInfo(ref info)) return 0;
+
+            // GetTickCount wraps to 0 roughly every 49.7 days; unchecked subtraction still
+            // yields the correct (small, positive) delta across that wraparound thanks to
+            // unsigned modular arithmetic, so it's left unguarded rather than special-cased.
+            return unchecked(GetTickCount() - info.dwTime);
+        }
+
         public void Dispose()
         {
             StopEffect();
+
+            _sleepCts.Cancel();
+            try { _sleepMonitorTask.Wait(200); } catch { /* task already exiting */ }
+            _sleepCts.Dispose();
+
             Disconnect();
         }
     }
