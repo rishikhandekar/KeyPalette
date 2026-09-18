@@ -67,7 +67,7 @@ namespace KeyPalette
             _saturation = s;
             _value = v;
 
-            RefreshAllFromHsv(updateWheelThumb: true, updateBrightnessSlider: true, updateTextBoxes: true);
+            RefreshAllFromHsv(updateWheelThumb: true, updateSaturationSlider: true, updateBrightnessSlider: true, updateTextBoxes: true);
         }
 
         // ---------------- Wheel rendering ----------------
@@ -146,10 +146,9 @@ namespace KeyPalette
         }
 
         /// <summary>Converts a click/drag point (in WheelCanvas coordinates) into a hue angle.
-        /// Saturation is no longer derived from the click's distance from center - it's locked
-        /// to 1.0 everywhere on the ring (see BuildWheelBitmap) - so only the angle matters here,
-        /// and the thumb always snaps to the ring's centerline regardless of how far in or out
-        /// the actual click/drag point was.</summary>
+        /// Saturation is no longer touched here at all - it's fully owned by SaturationSlider
+        /// now - so only the angle matters, and the thumb always snaps to the ring's centerline
+        /// regardless of how far in or out the actual click/drag point was.</summary>
         private void UpdateHueSaturationFromPoint(Point p)
         {
             double dx = p.X - WheelRadius;
@@ -159,21 +158,22 @@ namespace KeyPalette
             if (angle < 0) angle += 360.0;
 
             _hue = angle;
-            _saturation = 1.0; // locked - see BuildWheelBitmap
+            // _saturation deliberately left untouched - SaturationSlider controls it exclusively.
 
             double clampedX = WheelRadius + WheelCenterlineRadius * Math.Cos(angle * Math.PI / 180.0);
             double clampedY = WheelRadius + WheelCenterlineRadius * Math.Sin(angle * Math.PI / 180.0);
             Canvas.SetLeft(WheelThumb, clampedX - ThumbRadius);
             Canvas.SetTop(WheelThumb, clampedY - ThumbRadius);
 
-            RefreshAllFromHsv(updateWheelThumb: false, updateBrightnessSlider: false, updateTextBoxes: true);
+            RefreshAllFromHsv(updateWheelThumb: false, updateSaturationSlider: false, updateBrightnessSlider: false, updateTextBoxes: true);
         }
 
         /// <summary>Repositions the thumb from _hue - used whenever the color changed via
         /// something other than dragging the ring itself (typing hex/RGB, or the initial
         /// startColor), since those don't already have a screen point to work from. Always
-        /// places the thumb on the ring's centerline at that hue's angle; saturation isn't a
-        /// factor since it's locked to 1.0 everywhere on the ring.</summary>
+        /// places the thumb on the ring's centerline at that hue's angle - the ring's own
+        /// pixels are always full saturation regardless of the slider, so the thumb's position
+        /// only ever needs to reflect hue.</summary>
         private void UpdateThumbPositionFromHsv()
         {
             double angleRad = _hue * Math.PI / 180.0;
@@ -183,13 +183,22 @@ namespace KeyPalette
             Canvas.SetTop(WheelThumb, y - ThumbRadius);
         }
 
+        // ---------------- Saturation slider ----------------
+
+        private void SaturationSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
+        {
+            if (_suppressEvents) return;
+            _saturation = SaturationSlider.Value / 100.0;
+            RefreshAllFromHsv(updateWheelThumb: false, updateSaturationSlider: false, updateBrightnessSlider: false, updateTextBoxes: true);
+        }
+
         // ---------------- Brightness slider ----------------
 
         private void BrightnessSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
         {
             if (_suppressEvents) return;
             _value = BrightnessSlider.Value / 100.0;
-            RefreshAllFromHsv(updateWheelThumb: false, updateBrightnessSlider: false, updateTextBoxes: true);
+            RefreshAllFromHsv(updateWheelThumb: false, updateSaturationSlider: false, updateBrightnessSlider: false, updateTextBoxes: true);
         }
 
         // ---------------- Hex text box ----------------
@@ -219,7 +228,7 @@ namespace KeyPalette
             {
                 // Not valid hex - redisplay whatever the color actually still is, rather than
                 // leaving garbled text sitting in the box.
-                RefreshAllFromHsv(updateWheelThumb: false, updateBrightnessSlider: false, updateTextBoxes: true);
+                RefreshAllFromHsv(updateWheelThumb: false, updateSaturationSlider: false, updateBrightnessSlider: false, updateTextBoxes: true);
             }
         }
 
@@ -244,7 +253,7 @@ namespace KeyPalette
             }
             else
             {
-                RefreshAllFromHsv(updateWheelThumb: false, updateBrightnessSlider: false, updateTextBoxes: true);
+                RefreshAllFromHsv(updateWheelThumb: false, updateSaturationSlider: false, updateBrightnessSlider: false, updateTextBoxes: true);
             }
         }
 
@@ -268,7 +277,7 @@ namespace KeyPalette
 
             // Came from the text boxes rather than the wheel/slider, so both of those need to
             // catch up this time.
-            RefreshAllFromHsv(updateWheelThumb: true, updateBrightnessSlider: true, updateTextBoxes: true);
+            RefreshAllFromHsv(updateWheelThumb: true, updateSaturationSlider: true, updateBrightnessSlider: true, updateTextBoxes: true);
         }
 
         // ---------------- Shared refresh ----------------
@@ -280,7 +289,7 @@ namespace KeyPalette
         /// mid-interaction with (dragging the wheel, typing a text box) is never fought over by
         /// this same method re-writing it out from under them.
         /// </summary>
-        private void RefreshAllFromHsv(bool updateWheelThumb, bool updateBrightnessSlider, bool updateTextBoxes)
+        private void RefreshAllFromHsv(bool updateWheelThumb, bool updateSaturationSlider, bool updateBrightnessSlider, bool updateTextBoxes)
         {
             var (r, g, b) = HsvToRgb(_hue, _saturation, _value);
 
@@ -291,6 +300,7 @@ namespace KeyPalette
             _suppressEvents = true;
             try
             {
+                if (updateSaturationSlider) SaturationSlider.Value = _saturation * 100.0;
                 if (updateBrightnessSlider) BrightnessSlider.Value = _value * 100.0;
 
                 if (updateTextBoxes)

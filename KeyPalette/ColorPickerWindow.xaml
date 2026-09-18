@@ -1,7 +1,7 @@
 ﻿<Window x:Class="KeyPalette.ColorPickerWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Choose Color" Height="530" Width="336"
+        Title="Choose Color" Height="530" Width="386"
         WindowStartupLocation="CenterOwner"
         ResizeMode="NoResize" ShowInTaskbar="False"
         Background="#1A1A1A" Foreground="#FFFFFF"
@@ -137,20 +137,22 @@
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- WHEEL (Hue/Saturation) + BRIGHTNESS -->
+        <!-- WHEEL (Hue only - see BuildWheelBitmap) + SATURATION + BRIGHTNESS -->
         <Grid Grid.Row="0" Margin="0,0,0,20">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="22"/>
+                <ColumnDefinition Width="14"/>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="10"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
 
-            <!-- WheelImage is a WriteableBitmap painted once in code-behind (BuildWheelBitmap):
-                 for every pixel inside the circle, angle-from-center = hue, distance-from-center
-                 = saturation, value is fixed at 1.0 (brightness is the separate slider to the
-                 right, not baked into the wheel - the same split most native wheel pickers use).
-                 WheelThumb is a plain Ellipse the code-behind repositions on top of it; it's not
-                 hit-test visible so drags always land on the Canvas underneath, not the thumb. -->
+            <!-- WheelImage is a WriteableBitmap painted once in code-behind (BuildWheelBitmap): a
+                 hollow ring where angle-from-center = hue, saturation is locked to 1.0, and value
+                 is fixed at 1.0. Dragging only ever changes _hue now - saturation and brightness
+                 are the two sliders to the right instead. WheelThumb is a plain Ellipse the
+                 code-behind repositions on top of it; it's not hit-test visible so drags always
+                 land on the Canvas underneath, not the thumb. -->
             <Canvas x:Name="WheelCanvas" Grid.Column="0" Width="240" Height="240" Background="Transparent"
                     MouseLeftButtonDown="WheelCanvas_MouseLeftButtonDown"
                     MouseMove="WheelCanvas_MouseMove"
@@ -161,6 +163,14 @@
             </Canvas>
 
             <StackPanel Grid.Column="2" Width="24" HorizontalAlignment="Center">
+                <TextBlock Text="SAT" FontSize="9" Foreground="{StaticResource TextDimBrush}"
+                           HorizontalAlignment="Center" Margin="0,0,0,10"/>
+                <Slider x:Name="SaturationSlider" Style="{StaticResource VerticalSharpSlider}"
+                        Orientation="Vertical" Minimum="0" Maximum="100" Value="100" Height="180"
+                        ValueChanged="SaturationSlider_ValueChanged"/>
+            </StackPanel>
+
+            <StackPanel Grid.Column="4" Width="24" HorizontalAlignment="Center">
                 <TextBlock Text="BRIGHT" FontSize="9" Foreground="{StaticResource TextDimBrush}"
                            HorizontalAlignment="Center" Margin="0,0,0,10"/>
                 <Slider x:Name="BrightnessSlider" Style="{StaticResource VerticalSharpSlider}"
