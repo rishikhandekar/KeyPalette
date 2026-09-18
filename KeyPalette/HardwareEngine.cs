@@ -50,18 +50,30 @@ namespace KeyPalette
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
         private delegate uint WriteAppSettingsDelegate(uint page, uint offset, uint length, byte[] buffer);
 
+        [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+        private delegate uint ReadAppSettingsDelegate(uint page, uint offset, uint length, byte[] buffer);
+
         public event Action<string>? StatusChanged;
         public event Action<byte, byte, byte>? ColorChanged;
 
         private IntPtr _hDll = IntPtr.Zero;
         private SetDCHUDataDelegate? _setDchuData;
         private WriteAppSettingsDelegate? _writeAppSettings;
+        private ReadAppSettingsDelegate? _readAppSettings;
         private CancellationTokenSource? _animCts;
         private Task? _animTask;
         private readonly object _sync = new();
 
         public bool IsConnected => _hDll != IntPtr.Zero && _setDchuData != null && _writeAppSettings != null;
         public string? LoadedFrom { get; private set; }
+
+        /// <summary>The last color actually applied - whether from SetColor, an effect tick, or
+        /// a hardware read-back on Connect(). Unlike BaseColor (which only Breathing/Blink/
+        /// Heartbeat's pulse color reflects), this always matches whatever the physical
+        /// keyboard is genuinely showing right now, which is what anything re-opening the
+        /// color picker on an existing color - like a Quick Swatch pick, which never touches
+        /// BaseColor - should actually start from.</summary>
+        public (byte r, byte g, byte b) CurrentColor => _lastRawColor;
 
         /// <summary>
         /// The color used by Breathing, Blink, and Heartbeat (they pulse this one color's
@@ -199,8 +211,22 @@ namespace KeyPalette
                 _hDll = handle;
                 _setDchuData = Marshal.GetDelegateForFunctionPointer<SetDCHUDataDelegate>(pSet);
                 _writeAppSettings = Marshal.GetDelegateForFunctionPointer<WriteAppSettingsDelegate>(pWrite);
+
+                // ReadAppSettings is treated as optional rather than a connection requirement:
+                // some DLL builds may not export it, and losing the ability to read the current
+                // hardware color back is a much smaller regression than refusing to connect at
+                // all over it. If it's missing, TryReadCurrentColorFromHardware below just quietly
+                // does nothing.
+                IntPtr pRead = GetProcAddress(handle, "ReadAppSettings");
+                _readAppSettings = pRead != IntPtr.Zero
+                    ? Marshal.GetDelegateForFunctionPointer<ReadAppSettingsDelegate>(pRead)
+                    : null;
+
                 LoadedFrom = path;
                 StatusChanged?.Invoke($"Connected via {path}");
+
+                TryReadCurrentColorFromHardware();
+
                 return true;
             }
 
@@ -208,6 +234,37 @@ namespace KeyPalette
                 "InsydeDCHU.dll not found automatically. Click 'Locate InsydeDCHU.dll' and browse to it - " +
                 "it's the same DLL your Acer keyboard/control-center software already has installed.");
             return false;
+        }
+
+        /// <summary>
+        /// Reads back whatever color the embedded controller is actually currently showing
+        /// (page 2, offset 0x51, 3 bytes - the same page/offset SetColor writes R/G/B to) and
+        /// pushes it out as though it had just been applied by this app: updates _lastRawColor
+        /// and raises ColorChanged. Called once right after a successful Connect() so the UI's
+        /// preview glow and CurrentColor start out matching the physical keyboard instead of
+        /// defaulting to whatever this session's in-memory state happened to be (which, on a
+        /// freshly launched app, is nothing at all).
+        /// </summary>
+        private void TryReadCurrentColorFromHardware()
+        {
+            if (_readAppSettings == null) return;
+
+            try
+            {
+                byte[] buffer = new byte[3];
+                _readAppSettings(2, 0x51, 3, buffer);
+
+                byte r = buffer[0];
+                byte g = buffer[1];
+                byte b = buffer[2];
+
+                _lastRawColor = (r, g, b);
+                ColorChanged?.Invoke(r, g, b);
+            }
+            catch (Exception ex)
+            {
+                StatusChanged?.Invoke($"Connected, but couldn't read the current keyboard color: {ex.Message}");
+            }
         }
 
         private static IEnumerable<string> BuildCandidatePaths(string? explicitPath)
@@ -239,6 +296,7 @@ namespace KeyPalette
         {
             _setDchuData = null;
             _writeAppSettings = null;
+            _readAppSettings = null;
             if (_hDll != IntPtr.Zero)
             {
                 FreeLibrary(_hDll);

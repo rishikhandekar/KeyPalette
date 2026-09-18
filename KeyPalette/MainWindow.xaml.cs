@@ -401,7 +401,7 @@ namespace KeyPalette
 
         private void BtnPickCustomStatic_Click(object sender, RoutedEventArgs e)
         {
-            var picked = PickColor();
+            var picked = PickColor(_engine.CurrentColor);
             if (picked is { } c)
             {
                 _engine.StopEffect();
@@ -460,7 +460,14 @@ namespace KeyPalette
 
         private void BtnAddSequenceColor_Click(object sender, RoutedEventArgs e)
         {
-            var picked = PickColor();
+            // A logical starting point: whatever color was added last (so building up a
+            // sequence of similar shades doesn't mean re-navigating the picker from cyan every
+            // time), falling back to the current effect's base color if the sequence is empty.
+            var startColor = _engine.CustomSequence.Count > 0
+                ? _engine.CustomSequence[^1]
+                : _engine.BaseColor;
+
+            var picked = PickColor(startColor);
             if (picked is { } c)
             {
                 _engine.CustomSequence.Add(c);
