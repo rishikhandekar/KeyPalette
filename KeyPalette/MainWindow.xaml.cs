@@ -389,21 +389,14 @@ namespace KeyPalette
 
         // ---------------- Color picking helpers ----------------
 
-        private static (byte r, byte g, byte b)? PickColor(System.Drawing.Color? startColor = null)
+        private (byte r, byte g, byte b)? PickColor((byte r, byte g, byte b)? startColor = null)
         {
-            using var dialog = new System.Windows.Forms.ColorDialog
+            var picker = new ColorPickerWindow(startColor ?? (0x00, 0xE5, 0xFF))
             {
-                FullOpen = true,
-                AnyColor = true,
-                Color = startColor ?? System.Drawing.Color.FromArgb(0x00, 0xE5, 0xFF)
+                Owner = this
             };
 
-            if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
-            {
-                return (dialog.Color.R, dialog.Color.G, dialog.Color.B);
-            }
-
-            return null;
+            return picker.ShowDialog() == true ? picker.SelectedColor : null;
         }
 
         private void BtnPickCustomStatic_Click(object sender, RoutedEventArgs e)
@@ -419,8 +412,7 @@ namespace KeyPalette
 
         private void BtnPickEffectColor_Click(object sender, RoutedEventArgs e)
         {
-            var current = System.Drawing.Color.FromArgb(_engine.BaseColor.r, _engine.BaseColor.g, _engine.BaseColor.b);
-            var picked = PickColor(current);
+            var picked = PickColor(_engine.BaseColor);
             if (picked is { } c)
             {
                 _engine.BaseColor = c;

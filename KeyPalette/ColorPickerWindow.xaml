@@ -1,0 +1,216 @@
+﻿<Window x:Class="KeyPalette.ColorPickerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Choose Color" Height="530" Width="336"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize" ShowInTaskbar="False"
+        Background="#1A1A1A" Foreground="#FFFFFF"
+        FontFamily="Segoe UI Semibold">
+
+    <Window.Resources>
+
+        <SolidColorBrush x:Key="AccentBrush" Color="#FF003C"/>
+        <SolidColorBrush x:Key="PanelBorderBrush" Color="#2A2A2A"/>
+        <SolidColorBrush x:Key="TextDimBrush" Color="#8A8A8A"/>
+
+        <!-- FlatButton/AccentButton are copied here (pixel-for-pixel identical to MainWindow's
+             versions) rather than shared, since MainWindow.xaml declares them inside its own
+             <Window.Resources> instead of a merged ResourceDictionary, so a second Window can't
+             StaticResource them directly. If more windows like this show up later, pulling both
+             copies out into a shared Styles.xaml merged into App.xaml.Resources would be worth
+             doing - not done here to keep this change scoped to just the color picker. -->
+        <Style x:Key="FlatButton" TargetType="Button">
+            <Setter Property="Background" Value="#1A1A1A"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#2A2A2A"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="14,10"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                SnapsToDevicePixels="True">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                               Margin="{TemplateBinding Padding}"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource AccentBrush}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="AccentButton" TargetType="Button" BasedOn="{StaticResource FlatButton}">
+            <Setter Property="Background" Value="{StaticResource AccentBrush}"/>
+            <Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/>
+            <Setter Property="FontSize" Value="13"/>
+        </Style>
+
+        <!-- Same flat/dark look as MainWindow's SharpTextBox, reused here for Hex/R/G/B. -->
+        <Style x:Key="ColorTextBox" TargetType="TextBox">
+            <Setter Property="Background" Value="#0A0A0A"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="CaretBrush" Value="White"/>
+            <Setter Property="BorderBrush" Value="{StaticResource PanelBorderBrush}"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Height" Value="30"/>
+            <Setter Property="Padding" Value="0,4,0,0"/>
+            <Setter Property="TextAlignment" Value="Center"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="TextBox">
+                        <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}">
+                            <ScrollViewer x:Name="PART_ContentHost"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Vertical counterpart to MainWindow's SharpSlider - same flat track/thumb look, just
+             swapping which dimension is fixed (Width instead of Height) so it reads correctly
+             running top-to-bottom. WPF's default vertical Slider already puts Maximum at the
+             top, which matches "up = brighter" without needing IsDirectionReversed. -->
+        <Style x:Key="VerticalSharpSlider" TargetType="Slider">
+            <Setter Property="Width" Value="24"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Slider">
+                        <Grid HorizontalAlignment="Center">
+                            <Border Width="2" Background="#2A2A2A"/>
+                            <Track x:Name="PART_Track">
+                                <Track.DecreaseRepeatButton>
+                                    <RepeatButton Command="Slider.DecreaseLarge">
+                                        <RepeatButton.Template>
+                                            <ControlTemplate TargetType="RepeatButton">
+                                                <Border Background="{StaticResource AccentBrush}" Width="2"/>
+                                            </ControlTemplate>
+                                        </RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.DecreaseRepeatButton>
+                                <Track.IncreaseRepeatButton>
+                                    <RepeatButton Command="Slider.IncreaseLarge">
+                                        <RepeatButton.Template>
+                                            <ControlTemplate TargetType="RepeatButton">
+                                                <Border Background="Transparent" Width="2"/>
+                                            </ControlTemplate>
+                                        </RepeatButton.Template>
+                                    </RepeatButton>
+                                </Track.IncreaseRepeatButton>
+                                <Track.Thumb>
+                                    <Thumb Width="18" Height="10">
+                                        <Thumb.Template>
+                                            <ControlTemplate TargetType="Thumb">
+                                                <Border Background="White" Width="18" Height="10"/>
+                                            </ControlTemplate>
+                                        </Thumb.Template>
+                                    </Thumb>
+                                </Track.Thumb>
+                            </Track>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+    </Window.Resources>
+
+    <Grid Margin="22">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- WHEEL (Hue/Saturation) + BRIGHTNESS -->
+        <Grid Grid.Row="0" Margin="0,0,0,20">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto"/>
+                <ColumnDefinition Width="22"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- WheelImage is a WriteableBitmap painted once in code-behind (BuildWheelBitmap):
+                 for every pixel inside the circle, angle-from-center = hue, distance-from-center
+                 = saturation, value is fixed at 1.0 (brightness is the separate slider to the
+                 right, not baked into the wheel - the same split most native wheel pickers use).
+                 WheelThumb is a plain Ellipse the code-behind repositions on top of it; it's not
+                 hit-test visible so drags always land on the Canvas underneath, not the thumb. -->
+            <Canvas x:Name="WheelCanvas" Grid.Column="0" Width="240" Height="240" Background="Transparent"
+                    MouseLeftButtonDown="WheelCanvas_MouseLeftButtonDown"
+                    MouseMove="WheelCanvas_MouseMove"
+                    MouseLeftButtonUp="WheelCanvas_MouseLeftButtonUp">
+                <Image x:Name="WheelImage" Width="240" Height="240"/>
+                <Ellipse x:Name="WheelThumb" Width="16" Height="16" Stroke="White" StrokeThickness="2"
+                          IsHitTestVisible="False"/>
+            </Canvas>
+
+            <StackPanel Grid.Column="2" Width="24" HorizontalAlignment="Center">
+                <TextBlock Text="BRIGHT" FontSize="9" Foreground="{StaticResource TextDimBrush}"
+                           HorizontalAlignment="Center" Margin="0,0,0,10"/>
+                <Slider x:Name="BrightnessSlider" Style="{StaticResource VerticalSharpSlider}"
+                        Orientation="Vertical" Minimum="0" Maximum="100" Value="100" Height="180"
+                        ValueChanged="BrightnessSlider_ValueChanged"/>
+            </StackPanel>
+        </Grid>
+
+        <!-- LIVE PREVIEW -->
+        <Border Grid.Row="1" x:Name="PreviewSwatch" Height="40" Background="#00E5FF"
+                BorderBrush="{StaticResource PanelBorderBrush}" BorderThickness="1" Margin="0,0,0,18"/>
+
+        <!-- HEX / R / G / B - all four stay in sync via the code-behind's RefreshAllFromHsv,
+             whichever one the user is actually typing into is left alone until Enter/LostFocus
+             commits it (see CommitHexText/CommitRgbText), same pattern as Sleep Time's textbox
+             on the main window. -->
+        <Grid Grid.Row="2" Margin="0,0,0,22">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="108"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                <TextBlock Text="HEX" FontSize="9" Foreground="{StaticResource TextDimBrush}" Margin="0,0,0,6"/>
+                <TextBox x:Name="HexTextBox" Style="{StaticResource ColorTextBox}"
+                         LostFocus="HexTextBox_Committed" KeyDown="HexTextBox_KeyDown"/>
+            </StackPanel>
+            <StackPanel Grid.Column="1" Margin="0,0,6,0">
+                <TextBlock Text="R" FontSize="9" Foreground="{StaticResource TextDimBrush}" Margin="0,0,0,6"/>
+                <TextBox x:Name="RTextBox" Style="{StaticResource ColorTextBox}"
+                         LostFocus="RgbTextBox_Committed" KeyDown="RgbTextBox_KeyDown"/>
+            </StackPanel>
+            <StackPanel Grid.Column="2" Margin="0,0,6,0">
+                <TextBlock Text="G" FontSize="9" Foreground="{StaticResource TextDimBrush}" Margin="0,0,0,6"/>
+                <TextBox x:Name="GTextBox" Style="{StaticResource ColorTextBox}"
+                         LostFocus="RgbTextBox_Committed" KeyDown="RgbTextBox_KeyDown"/>
+            </StackPanel>
+            <StackPanel Grid.Column="3">
+                <TextBlock Text="B" FontSize="9" Foreground="{StaticResource TextDimBrush}" Margin="0,0,0,6"/>
+                <TextBox x:Name="BTextBox" Style="{StaticResource ColorTextBox}"
+                         LostFocus="RgbTextBox_Committed" KeyDown="RgbTextBox_KeyDown"/>
+            </StackPanel>
+        </Grid>
+
+        <!-- BUTTONS -->
+        <UniformGrid Grid.Row="4" Columns="2">
+            <Button Content="CANCEL" Style="{StaticResource FlatButton}" Height="44" Margin="0,0,6,0" Click="BtnCancel_Click"/>
+            <Button Content="APPLY" Style="{StaticResource AccentButton}" Height="44" Margin="6,0,0,0" Click="BtnApply_Click"/>
+        </UniformGrid>
+    </Grid>
+</Window>
