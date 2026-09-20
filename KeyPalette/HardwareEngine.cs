@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -35,6 +36,15 @@ namespace KeyPalette
     {
         // --- Native DLL loading plumbing ---
 
+        // Plain LoadLibraryW, combined with a temporary Environment.CurrentDirectory switch in
+        // Connect() (see below): InsydeDCHU.dll makes its own internal LoadLibrary calls for its
+        // same-folder dependencies, and those resolve via the process's actual current working
+        // directory rather than the path passed to LoadLibraryW - LOAD_WITH_ALTERED_SEARCH_PATH
+        // only changes search behavior for LoadLibraryW's own default-DLL-directories lookup,
+        // not for whatever InsydeDCHU.dll does internally once it's already loaded. Manually
+        // browsing to it via OpenFileDialog happened to work because Windows briefly changes the
+        // working directory to wherever the dialog was pointed - CWD-switching here mimics that
+        // deliberately instead of relying on it as a side effect.
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern IntPtr LoadLibraryW(string lpLibFileName);
 
@@ -66,6 +76,15 @@ namespace KeyPalette
 
         public bool IsConnected => _hDll != IntPtr.Zero && _setDchuData != null && _writeAppSettings != null;
         public string? LoadedFrom { get; private set; }
+
+        /// <summary>
+        /// Where a successfully-found DLL path gets remembered between runs, so a full
+        /// SafeSearchForDll walk of Program Files only ever has to happen once on a given
+        /// machine (the first time the DLL isn't already sitting in the app's own folder)
+        /// rather than on every single launch.
+        /// </summary>
+        private readonly string _cacheFilePath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "KeyPalette", "dllpath.txt");
 
         /// <summary>The last color actually applied - whether from SetColor, an effect tick, or
         /// a hardware read-back on Connect(). Unlike BaseColor (which only Breathing/Blink/
@@ -185,19 +204,73 @@ namespace KeyPalette
         }
 
         /// <summary>
-        /// Tries the app folder and the common Acer install locations first.
-        /// Pass an explicit path (from a file picker) to try that first instead.
+        /// Checks locations in increasing order of cost: the app's own folder, then a cached
+        /// path remembered from a previous successful connect, then whatever candidatePaths the
+        /// caller supplies (an explicit Locate pick, or PerformDeepSearch's results) - tried in
+        /// that order until one actually loads. Unlike the old single-path version, a candidate
+        /// that *exists* but fails to load (e.g. a copy sitting inside the restricted
+        /// WindowsApps sandbox, which Windows blocks desktop apps from loading out of) no longer
+        /// ends the search - it's skipped and the next candidate is tried. A successful connect
+        /// gets written to the cache file so future launches can skip candidatePaths entirely.
+        ///
+        /// Must be called on the UI (STA) thread: LoadLibraryW on this DLL only succeeds there.
+        /// OEM DLLs like this one often touch COM or window handles from DllMain, and Windows
+        /// fails the load outright (returns NULL) if that runs on a background MTA thread - which
+        /// is exactly what silently broke the old single-call, background-thread auto-connect.
         /// </summary>
-        public bool Connect(string? explicitDllPath = null)
+        public bool Connect(IEnumerable<string>? candidatePaths = null)
         {
             Disconnect();
 
-            foreach (var path in BuildCandidatePaths(explicitDllPath))
-            {
-                if (!File.Exists(path)) continue;
+            var candidates = new List<string>();
 
-                var handle = LoadLibraryW(path);
-                if (handle == IntPtr.Zero) continue;
+            string baseDirCandidate = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "InsydeDCHU.dll");
+            if (File.Exists(baseDirCandidate)) candidates.Add(baseDirCandidate);
+
+            string? cachedPath = TryReadCachedPath();
+            if (cachedPath != null) candidates.Add(cachedPath);
+
+            if (candidatePaths != null) candidates.AddRange(candidatePaths);
+
+            if (candidates.Count == 0)
+            {
+                StatusChanged?.Invoke(
+                    "InsydeDCHU.dll not found in the app folder or cache. Searching Program Files - " +
+                    "this may take a moment.");
+                return false;
+            }
+
+            int attempted = 0;
+
+            foreach (string dllPath in candidates)
+            {
+                if (!File.Exists(dllPath)) continue;
+                attempted++;
+
+                // InsydeDCHU.dll's own internal dependency loads key off the process's actual
+                // current working directory, not the path we hand LoadLibraryW - so point CWD at
+                // the DLL's folder just for the duration of the load, then always put it back,
+                // success or failure, so nothing else in the app (relative file paths, etc.)
+                // gets a permanently altered working directory.
+                string originalDir = Environment.CurrentDirectory;
+                IntPtr handle;
+                try
+                {
+                    Environment.CurrentDirectory = Path.GetDirectoryName(dllPath)!;
+                    handle = LoadLibraryW(dllPath);
+                }
+                finally
+                {
+                    Environment.CurrentDirectory = originalDir;
+                }
+
+                if (handle == IntPtr.Zero)
+                {
+                    // Most commonly a copy sitting somewhere Windows won't let a desktop app
+                    // load from (WindowsApps and the like) - try the next candidate rather than
+                    // giving up on the whole search over one bad copy.
+                    continue;
+                }
 
                 IntPtr pSet = GetProcAddress(handle, "SetDCHU_Data");
                 IntPtr pWrite = GetProcAddress(handle, "WriteAppSettings");
@@ -215,25 +288,84 @@ namespace KeyPalette
                 // ReadAppSettings is treated as optional rather than a connection requirement:
                 // some DLL builds may not export it, and losing the ability to read the current
                 // hardware color back is a much smaller regression than refusing to connect at
-                // all over it. If it's missing, TryReadCurrentColorFromHardware below just quietly
-                // does nothing.
+                // all over it.
                 IntPtr pRead = GetProcAddress(handle, "ReadAppSettings");
                 _readAppSettings = pRead != IntPtr.Zero
                     ? Marshal.GetDelegateForFunctionPointer<ReadAppSettingsDelegate>(pRead)
                     : null;
 
-                LoadedFrom = path;
-                StatusChanged?.Invoke($"Connected via {path}");
+                LoadedFrom = dllPath;
+                StatusChanged?.Invoke($"Connected via {dllPath}");
+
+                SaveCachedPath(dllPath);
 
                 TryReadCurrentColorFromHardware();
-
                 return true;
             }
 
-            StatusChanged?.Invoke(
-                "InsydeDCHU.dll not found automatically. Click 'Locate InsydeDCHU.dll' and browse to it - " +
-                "it's the same DLL your Acer keyboard/control-center software already has installed.");
+            StatusChanged?.Invoke(attempted > 0
+                ? $"Found {attempted} copy/copies of InsydeDCHU.dll but none of them could be loaded."
+                : "InsydeDCHU.dll not found in the app folder, cache, or any supplied path.");
             return false;
+        }
+
+        /// <summary>
+        /// The slow fallback search: a full walk of Program Files and Program Files (x86) via
+        /// SafeSearchForDll. Deliberately separate from <see cref="Connect"/> so callers can run
+        /// this on a background thread (it's the expensive part) while still calling Connect()
+        /// itself - which does the actual LoadLibraryW - back on the UI thread afterward. Purely
+        /// a file-system search with no native loading involved, so unlike Connect() it's safe
+        /// to call from any thread.
+        ///
+        /// Returns every copy found (not just the first), lazily - a copy sitting somewhere
+        /// Windows won't let a desktop app load from (or one that's simply corrupt) still leaves
+        /// Connect() able to fall through to the next candidate instead of the whole search
+        /// having committed to one path that never works.
+        /// </summary>
+        public IEnumerable<string> PerformDeepSearch()
+        {
+            string programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            string programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+
+            return SafeSearchForDll(programFiles, "InsydeDCHU.dll")
+                   .Concat(SafeSearchForDll(programFilesX86, "InsydeDCHU.dll"));
+        }
+
+        /// <summary>Reads back a previously-cached DLL path, verifying the file still actually
+        /// exists there (it may have been uninstalled/moved since it was cached) before trusting
+        /// it. Any read failure (file missing, permissions, corrupt content) is treated the same
+        /// as "no cache" rather than as an error worth surfacing.</summary>
+        private string? TryReadCachedPath()
+        {
+            try
+            {
+                if (!File.Exists(_cacheFilePath)) return null;
+
+                string cachedPath = File.ReadAllText(_cacheFilePath).Trim();
+                return !string.IsNullOrEmpty(cachedPath) && File.Exists(cachedPath) ? cachedPath : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>Persists a known-good DLL path so future launches can skip SafeSearchForDll
+        /// entirely. Failure to write (e.g. a locked-down AppData folder) is non-fatal - the
+        /// connection this call already succeeded still stands, it just means next launch will
+        /// have to search again.</summary>
+        private void SaveCachedPath(string validPath)
+        {
+            try
+            {
+                string? dir = Path.GetDirectoryName(_cacheFilePath);
+                if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+                File.WriteAllText(_cacheFilePath, validPath);
+            }
+            catch (Exception ex)
+            {
+                StatusChanged?.Invoke($"Connected, but couldn't cache the DLL path for next time: {ex.Message}");
+            }
         }
 
         /// <summary>
@@ -267,27 +399,72 @@ namespace KeyPalette
             }
         }
 
-        private static IEnumerable<string> BuildCandidatePaths(string? explicitPath)
+        /// <summary>
+        /// Iterative (not recursive) breadth-first walk of rootDir looking for targetFileName,
+        /// using a Queue&lt;string&gt; of directories still to visit rather than a call-stack-based
+        /// recursive walk - a pathologically deep directory tree can't cause a stack overflow
+        /// this way, only a longer queue. Yields every matching copy it finds rather than
+        /// stopping at the first: some copies (notably ones sitting inside the WindowsApps UWP
+        /// sandbox, which is skipped outright below since Windows blocks desktop apps from
+        /// loading out of it entirely) exist on disk but can't actually be loaded, so Connect()
+        /// needs more than one candidate to try.
+        ///
+        /// The file-enumeration and directory-enumeration steps for a given folder are two
+        /// fully independent try/catch blocks, deliberately NOT sharing a `continue`. Some
+        /// folders (certain OS-protected directories, or ones with unusual ACLs) throw
+        /// UnauthorizedAccessException on GetFiles while GetDirectories on that same path still
+        /// succeeds, or vice versa - if the two were coupled through one `continue`, a files
+        /// failure would also silently abandon that folder's entire subtree, permanently
+        /// missing anything nested underneath even though it was perfectly readable.
+        /// </summary>
+        private static IEnumerable<string> SafeSearchForDll(string rootDir, string targetFileName)
         {
-            if (!string.IsNullOrWhiteSpace(explicitPath))
-                yield return explicitPath;
+            if (string.IsNullOrEmpty(rootDir) || !Directory.Exists(rootDir)) yield break;
 
-            yield return Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "InsydeDCHU.dll");
+            var pending = new Queue<string>();
+            pending.Enqueue(rootDir);
 
-            string[] roots =
+            while (pending.Count > 0)
             {
-                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86),
-                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles)
-            };
-            string[] appFolders = { "Acer Control Center", "PredatorSense", "NitroSense", "Acer" };
+                string currentDir = pending.Dequeue();
 
-            foreach (var root in roots)
-            {
-                if (string.IsNullOrEmpty(root)) continue;
-                foreach (var folder in appFolders)
+                string[] files = Array.Empty<string>();
+                try
                 {
-                    yield return Path.Combine(root, "Acer", folder, "InsydeDCHU.dll");
-                    yield return Path.Combine(root, folder, "InsydeDCHU.dll");
+                    files = Directory.GetFiles(currentDir);
+                }
+                catch (UnauthorizedAccessException) { /* swallow - this folder's files just aren't readable */ }
+                catch (PathTooLongException) { /* swallow */ }
+                catch (IOException) { /* swallow */ }
+
+                foreach (var file in files)
+                {
+                    if (string.Equals(Path.GetFileName(file), targetFileName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        yield return file; // keep searching - there may be other, loadable copies elsewhere
+                    }
+                }
+
+                string[] subDirs = Array.Empty<string>();
+                try
+                {
+                    subDirs = Directory.GetDirectories(currentDir);
+                }
+                catch (UnauthorizedAccessException) { /* swallow - independent of the GetFiles outcome above */ }
+                catch (PathTooLongException) { /* swallow */ }
+                catch (IOException) { /* swallow */ }
+
+                foreach (var dir in subDirs)
+                {
+                    // WindowsApps is the UWP/MSIX sandbox - Windows blocks desktop apps from
+                    // loading DLLs out of it by design (that's exactly what broke connecting to
+                    // the copy the deep search used to find in here), and it's typically a large,
+                    // deeply-nested tree, so skipping it outright also meaningfully speeds up
+                    // the rest of the walk rather than just avoiding a load that would fail.
+                    string folderName = Path.GetFileName(dir);
+                    if (folderName.Equals("WindowsApps", StringComparison.OrdinalIgnoreCase)) continue;
+
+                    pending.Enqueue(dir);
                 }
             }
         }

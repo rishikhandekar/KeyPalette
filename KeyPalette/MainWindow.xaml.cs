@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
@@ -81,9 +82,38 @@ namespace KeyPalette
                 _lastHwStatus = $"Reactive effect unavailable - keyboard hook failed: {ex.Message}";
             }
 
-            Loaded += (_, _) =>
+            // Loaded is async so it can await the background search without blocking the UI
+            // thread - but the two _engine.Connect() calls themselves are NOT backgrounded: this
+            // DLL's LoadLibraryW call only succeeds when made from the UI (STA) thread, since
+            // OEM DLLs like this one often touch COM/window handles from DllMain and Windows
+            // fails the load outright on a background MTA thread. Only the slow, purely-
+            // file-system PerformDeepSearch() runs on Task.Run.
+            Loaded += async (_, _) =>
             {
-                TryConnect();
+                bool connected = _engine.Connect();
+
+                if (!connected)
+                {
+                    HwStatusFooter.Text = "Searching for hardware driver... (This may take a moment)";
+
+                    // Materialized once with ToList() rather than checked with .Any() and then
+                    // handed to Connect() separately - PerformDeepSearch's walk is lazy, so
+                    // enumerating it twice would mean doing the slow Program Files search twice.
+                    List<string> foundPaths = await Task.Run(() => _engine.PerformDeepSearch().ToList());
+
+                    if (foundPaths.Count > 0)
+                    {
+                        _engine.Connect(foundPaths);
+                    }
+                    else
+                    {
+                        const string msg = "Not connected - see Settings to locate InsydeDCHU.dll.";
+                        _lastHwStatus = msg;
+                        if (_settingsHwLabel != null) _settingsHwLabel.Text = msg;
+                        HwStatusFooter.Text = msg;
+                    }
+                }
+
                 RefreshSequencePanel();
                 RefreshPresetList();
                 ApplySleepMinutes(0, updateSlider: true);
@@ -355,7 +385,7 @@ namespace KeyPalette
 
         private void TryConnect(string? explicitDllPath = null)
         {
-            bool ok = _engine.Connect(explicitDllPath);
+            bool ok = _engine.Connect(explicitDllPath != null ? new[] { explicitDllPath } : null);
             string msg = ok
                 ? $"Connected via {_engine.LoadedFrom}"
                 : "Not connected - see Settings to locate InsydeDCHU.dll.";
@@ -406,16 +436,19 @@ namespace KeyPalette
             {
                 _engine.StopEffect();
                 _engine.SetColor(c.r, c.g, c.b);
+                _engine.BaseColor = c;
+                EffectColorSwatch.Background = new SolidColorBrush(Color.FromRgb(c.r, c.g, c.b));
                 StatusLabel.Text = $"STATUS: STATIC #{c.r:X2}{c.g:X2}{c.b:X2} APPLIED";
             }
         }
 
         private void BtnPickEffectColor_Click(object sender, RoutedEventArgs e)
         {
-            var picked = PickColor(_engine.BaseColor);
+            var picked = PickColor(_engine.CurrentColor);
             if (picked is { } c)
             {
                 _engine.BaseColor = c;
+                _engine.SetColor(c.r, c.g, c.b);
                 EffectColorSwatch.Background = new SolidColorBrush(Color.FromRgb(c.r, c.g, c.b));
                 StatusLabel.Text = $"STATUS: EFFECT COLOR SET TO #{c.r:X2}{c.g:X2}{c.b:X2}";
             }
@@ -669,6 +702,8 @@ namespace KeyPalette
 
                 _engine.StopEffect();
                 _engine.SetColor(r, g, b);
+                _engine.BaseColor = (r, g, b);
+                EffectColorSwatch.Background = new SolidColorBrush(Color.FromRgb(r, g, b));
                 StatusLabel.Text = $"STATUS: STATIC #{hex} APPLIED";
             }
         }
