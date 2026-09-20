@@ -628,7 +628,7 @@ namespace KeyPalette
             {
                 case UiMode.Static:
                     _engine.StopEffect();
-                    _engine.SetColor(_engine.BaseColor.r, _engine.BaseColor.g, _engine.BaseColor.b);
+                    _engine.SetColor(_engine.CurrentColor.r, _engine.CurrentColor.g, _engine.CurrentColor.b);
                     StatusLabel.Text = "STATUS: STATIC COLOR APPLIED";
                     break;
 
