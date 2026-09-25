@@ -103,7 +103,9 @@ namespace KeyPalette
 
                     if (foundPaths.Count > 0)
                     {
-                        _engine.Connect(foundPaths);
+                        // Captured back into `connected` (rather than discarded, as before) so
+                        // the sync-color step below fires for this path too, not just the fast one.
+                        connected = _engine.Connect(foundPaths);
                     }
                     else
                     {
@@ -113,6 +115,11 @@ namespace KeyPalette
                         HwStatusFooter.Text = msg;
                     }
                 }
+
+                // Whichever path connected, Connect() already read the keyboard's actual current
+                // color into _engine.CurrentColor - pull that into BaseColor and the swatch so
+                // they don't sit on the default Cyan until the user happens to click something.
+                if (connected) SyncInitialColor();
 
                 RefreshSequencePanel();
                 RefreshPresetList();
@@ -386,12 +393,26 @@ namespace KeyPalette
         private void TryConnect(string? explicitDllPath = null)
         {
             bool ok = _engine.Connect(explicitDllPath != null ? new[] { explicitDllPath } : null);
+            if (ok) SyncInitialColor();
+
             string msg = ok
                 ? $"Connected via {_engine.LoadedFrom}"
                 : "Not connected - see Settings to locate InsydeDCHU.dll.";
             _lastHwStatus = msg;
             if (_settingsHwLabel != null) _settingsHwLabel.Text = msg;
             HwStatusFooter.Text = msg;
+        }
+
+        /// <summary>
+        /// Pulls whatever color Connect() just read back from the physical keyboard into
+        /// _engine.BaseColor and the Presets tab's EffectColorSwatch, so both start out matching
+        /// the hardware instead of sitting on the engine's in-memory default (Cyan) until the
+        /// user happens to open the color picker.
+        /// </summary>
+        private void SyncInitialColor()
+        {
+            _engine.BaseColor = _engine.CurrentColor;
+            EffectColorSwatch.Background = new SolidColorBrush(Color.FromRgb(_engine.CurrentColor.r, _engine.CurrentColor.g, _engine.CurrentColor.b));
         }
 
         private void OnHardwareStatus(string message)
