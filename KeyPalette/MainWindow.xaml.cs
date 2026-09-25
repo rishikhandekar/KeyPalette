@@ -280,16 +280,16 @@ namespace KeyPalette
         }
 
         /// <summary>Effect Color only makes sense once an effect is actually picked (Presets
-        /// config state), and for the four effects that use a single flash/pulse color
+        /// config state), and for the five effects that use a single flash/pulse color
         /// (Rainbow sweeps every hue and Fire always randomizes its own ember shades, so both
-        /// are excluded). Those same four effects also get the Multi Colors checkbox, and hide
+        /// are excluded). Those same five effects also get the Multi Colors checkbox, and hide
         /// the swatch itself while that's checked since a fixed color is meaningless then.</summary>
         private void UpdateEffectColorVisibility()
         {
             if (EffectColorSection == null) return;
 
             bool isPresetsConfig = _mode == UiMode.Presets && !_presetShowingGallery;
-            bool effectHasColor = _selectedPresetEffect is "Breathing" or "Blink" or "Heartbeat" or "Reactive";
+            bool effectHasColor = _selectedPresetEffect is "Breathing" or "Blink" or "Heartbeat" or "Reactive" or "AmbientReactive";
             EffectColorSection.Visibility = isPresetsConfig && effectHasColor ? Visibility.Visible : Visibility.Collapsed;
 
             MultiColorsCheckBox.Visibility = effectHasColor ? Visibility.Visible : Visibility.Collapsed;

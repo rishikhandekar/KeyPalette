@@ -586,12 +586,18 @@ namespace KeyPalette
 
             // Fast typing re-triggers this far quicker than a single fade takes to finish -
             // cancel whatever fade is still in flight so the new flash always starts clean from
-            // full brightness instead of blending in partway through the previous one.
+            // full brightness instead of blending in partway through the previous one. Note:
+            // deliberately NOT disposing previousCts here. A still-running FadeReactiveFlashAsync
+            // for the superseded flash may be mid-await on previousCts.Token (e.g. inside
+            // Task.Delay) on another thread at this exact moment; disposing the CTS while that's
+            // happening can throw ObjectDisposedException there. Cancel() alone is enough to
+            // unwind that task (it's caught as TaskCanceledException), and leaving the CTS
+            // undisposed for the GC to collect trades a tiny, short-lived allocation for
+            // eliminating that race entirely.
             var previousCts = _reactiveFadeCts;
             var cts = new CancellationTokenSource();
             _reactiveFadeCts = cts;
             previousCts?.Cancel();
-            previousCts?.Dispose();
 
             SetColor(r, g, b);
             double restingFraction = _reactiveAmbient ? AmbientReactiveDimLevel : 0.0;
